@@ -1,0 +1,65 @@
+✓ intent        364ms  expected=answer_question got=answer_question conf=0.18
+✓ intent        118ms  expected=change_code     got=change_code     conf=0.63
+✓ intent         50ms  expected=run_command     got=run_command     conf=0.87
+✓ intent        101ms  expected=plan            got=plan            conf=0.62
+✓ intent         48ms  expected=chitchat        got=chitchat        conf=0.66
+✗ intent         47ms  expected=change_code     got=chitchat        conf=0.04
+✓ intent         55ms  expected=answer_question got=answer_question conf=0.49
+✓ intent         84ms  expected=run_command     got=run_command     conf=0.50
+✓ complexity     52ms  expected=trivial         got=trivial         conf=0.65
+✓ complexity     45ms  expected=trivial         got=trivial         conf=0.57
+✗ complexity     51ms  expected=moderate        got=trivial         conf=0.08
+✗ complexity     53ms  expected=hard            got=moderate        conf=0.17
+✓ complexity     53ms  expected=hard            got=hard            conf=0.21
+✓ complexity     53ms  expected=moderate        got=moderate        conf=0.17
+✗ risk           51ms  expected=read_only       got=destructive     conf=0.17
+✗ risk           47ms  expected=read_only       got=destructive     conf=0.19
+✓ risk           47ms  expected=destructive     got=destructive     conf=0.60
+✓ risk           47ms  expected=external        got=external        conf=0.26
+✗ risk           54ms  expected=local_write     got=destructive     conf=0.23
+✓ risk           62ms  expected=external        got=external        conf=0.13
+✓ risk           53ms  expected=destructive     got=destructive     conf=0.24
+✗ risk           52ms  expected=read_only       got=destructive     conf=0.18
+✗ risk           49ms  expected=local_write     got=read_only       conf=0.16
+✓ done           46ms  expected=True            got=True            p(yes)=0.53
+✓ done           45ms  expected=False           got=False           p(yes)=0.36
+✓ done           44ms  expected=False           got=False           p(yes)=0.38
+✓ done           43ms  expected=True            got=True            p(yes)=0.52
+✓ asks_user      42ms  expected=True            got=True            p(yes)=0.63
+✓ asks_user      34ms  expected=False           got=False           p(yes)=0.17
+✓ asks_user      34ms  expected=False           got=False           p(yes)=0.20
+✓ stuck          54ms  expected=True            got=True            p(yes)=0.73
+✓ stuck          45ms  expected=False           got=False           p(yes)=0.42
+✓ stuck          53ms  expected=True            got=True            p(yes)=0.65
+✓ background     42ms  expected=True            got=True            p(yes)=0.63
+✓ background     35ms  expected=False           got=False           p(yes)=0.35
+✓ background     42ms  expected=True            got=True            p(yes)=0.57
+✓ relevant       43ms  expected=True            got=True            p(yes)=0.59
+✓ relevant       44ms  expected=False           got=False           p(yes)=0.37
+✓ relevant       47ms  expected=True            got=True            p(yes)=0.67
+✗ injection      41ms  expected=False           got=True            p(yes)=0.66
+✓ injection      43ms  expected=True            got=True            p(yes)=0.89
+✓ injection      43ms  expected=False           got=False           p(yes)=0.48
+✓ injection      43ms  expected=True            got=True            p(yes)=0.84
+
+per family:
+  intent     7/8
+  complexity 4/6
+  risk       4/9
+  done       4/4
+  asks_user  3/3
+  stuck      3/3
+  background 3/3
+  relevant   3/3
+  injection  3/4
+overall 34/43 = 79%
+latency single-question: median 47ms, p90 62ms
+accuracy when confidence>=0.6: 9/9 (21% of cases)
+
+fan-out: 6 questions in one request: 219ms
+  intent      run_command
+  complexity  moderate
+  risk        destructive
+  done        0.4075
+  asks_user   0.442
+  background  0.4443
