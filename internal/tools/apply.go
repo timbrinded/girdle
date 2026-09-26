@@ -38,8 +38,30 @@ type Change struct {
 
 // ApplyInput is the apply tool's input.
 type ApplyInput struct {
-	Changes []Change `json:"changes" description:"Every edit and file write the task needs, applied in order."`
-	Check   string   `json:"check,omitempty" description:"Shell command that proves the task is done: build and run the tests, plus quick checks for anything the tests can't show, for example grep that an old name is gone."`
+	Changes Changes `json:"changes" description:"Every edit and file write the task needs, applied in order."`
+	Check   string  `json:"check" description:"Shell command that proves the task is done: build and run the tests, plus quick checks for anything the tests can't show, for example grep that an old name is gone. Don't hide its exit code."`
+}
+
+// Changes is the list of changes in an apply call. Models sometimes send it
+// as a string holding the JSON array; that is accepted too, since rejecting
+// it makes the model write every file again.
+type Changes []Change
+
+// UnmarshalJSON accepts a JSON array of changes, or a string containing one.
+func (c *Changes) UnmarshalJSON(data []byte) error {
+	var list []Change
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		data = []byte(s)
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	*c = list
+	return nil
 }
 
 func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

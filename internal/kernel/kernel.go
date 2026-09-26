@@ -513,9 +513,9 @@ Each request starts with a repository snapshot: every file, and the full text of
 	if cfg.Batch {
 		b.WriteString(`
 
-Every response you send costs the user several seconds, so finish in as few as you can. Make changes with the apply tool: put every edit and new file the task needs into one apply call, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. apply runs the check straight after the changes, so a single response both changes and verifies the code. If the check fails, send one more apply with the fixes. Keep any text to a sentence.
+Every response you send costs the user several seconds, so finish in as few as you can. Make changes with the apply tool: put every edit and new file the task needs into one apply call, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. apply runs the check straight after the changes, so a single response both changes and verifies the code. The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". If the check fails, send one more apply with the fixes. Keep any text to a sentence.
 
-Writing takes time too, so write as little as the task allows. Change existing files with old_text and new_text edits, each old_text short but unique; use content only for new files or files you are mostly rewriting. Keep new tests compact: one focused test per behaviour.`)
+Writing takes time too, so write as little as the task allows. Change existing files with old_text and new_text edits, each old_text short but unique; use content only for new files or files you are mostly rewriting. Changes apply in order, so never let two changes touch the same lines: merge them into one. Keep new tests compact: one focused test per behaviour.`)
 	}
 	return b.String()
 }

@@ -141,6 +141,11 @@ func TestApply(t *testing.T) {
 		t.Fatalf("failed change should skip the check: %+v", res)
 	}
 
+	res = run2(t, apply, `{"changes":"[{\"path\":\"a.txt\",\"old_text\":\"girdle\",\"new_text\":\"string\"}]","check":"cat a.txt"}`)
+	if res.IsError || !strings.Contains(res.Content, "hello string") {
+		t.Fatalf("changes sent as a string: %+v", res)
+	}
+
 	paths, check, ok := ParseApply(`{"changes":[{"path":"a.go","old_text":"x","new_text":"y"},{"path":"a.go","content":"z"},{"path":"b.go","content":""}],"check":"go test ./..."}`)
 	if !ok || !slices.Equal(paths, []string{"a.go", "b.go"}) || check != "go test ./..." {
 		t.Fatalf("ParseApply = %v, %q, %v", paths, check, ok)
@@ -148,7 +153,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestBatchedRequiredParams(t *testing.T) {
-	want := map[string][]string{"read": {"path"}, "apply": {"changes"}, "bash": {"command"}}
+	want := map[string][]string{"read": {"path"}, "apply": {"changes", "check"}, "bash": {"command"}}
 	for _, tool := range Batched(t.TempDir()) {
 		info := tool.Info()
 		got := slices.Sorted(slices.Values(info.Required))
@@ -156,4 +161,13 @@ func TestBatchedRequiredParams(t *testing.T) {
 			t.Errorf("%s: required = %v, want %v", info.Name, got, want[info.Name])
 		}
 	}
+}
+
+func run2(t *testing.T, tool fantasy.AgentTool, input string) fantasy.ToolResponse {
+	t.Helper()
+	res, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "2", Name: "apply", Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
 }
