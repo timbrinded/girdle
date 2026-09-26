@@ -52,6 +52,7 @@ There is no up-front implementation plan. We deliver in **segments**:
 - A gate is a runnable scenario against a fixture repo, using real Jev and a real LLM, plus a short demo by the user. Mocks don't count as a gate.
 - Issues say *what* must be true and *how we'll know*, never *how*. Decide the how from the code as it is. Keep to the segment's scope, and cut scope rather than overrun.
 - After making a non-obvious decision, record it in `docs/decisions/`: a few lines covering the decision, why, and the date.
+- Test a new idea against the current fast flow only, on the tasks it targets (`girdle-fast` against `girdle-fast+<flag>`). Run the default flow and full suites only at milestones. An idea that doesn't pay is removed or shelved, with its evidence in `docs/decisions/`, and isn't re-run.
 
 ## Reference
 - Research, measurements and decision history: `research/01-harness-and-jev.md`

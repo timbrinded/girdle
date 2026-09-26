@@ -5,9 +5,10 @@
 #   bench/run-one.sh <agent> <task> <rep> <outroot>
 #
 # Agents: girdle, girdle-nojev (checkpoints off), girdle-fast (-fast flow),
-# pi (vanilla Pi, run in tmux). Girdle names take optional suffixes:
-# -r<N> races N copies of each LLM call, -minimal or -low fixes the effort,
-# and -mix or -oss (before any of those) moves calls to a fast model.
+# pi (vanilla Pi, run in tmux). A Girdle agent can carry Girdle flags after
+# a +, which is how an idea or an ablation is tested:
+# girdle-fast+reproduce=false runs -fast -reproduce=false, and
+# girdle-fast+race=5+hedge=2s runs -fast -race=5 -hedge=2s.
 # Expects OPENROUTER_API_KEY and TYPESAFE_API_KEY in the environment.
 set -uo pipefail
 
@@ -24,6 +25,17 @@ id=$task.$agent.$rep
 out=$outroot/$id
 mkdir -p "$out"
 
+base=${agent%%+*}
+flags=()
+if [[ $agent == *+* ]]; then
+  IFS=+ read -ra parts <<<"${agent#*+}"
+  for f in "${parts[@]}"; do flags+=("-$f"); done
+fi
+if [[ $base == pi ]] && ((${#flags[@]})); then
+  echo "pi takes no + flags: $agent" >&2
+  exit 2
+fi
+
 # In warm mode (WARM_DIR, from run-warm.sh) the working directory is reused
 # and reset with git; otherwise each run gets a fresh copy.
 if [[ -n ${WARM_DIR:-} ]]; then
@@ -35,58 +47,13 @@ else
 fi
 prompt=$(cat "$tdir/task.md")
 
-# An agent name ending in an effort (-none, -minimal, -low) runs at that
-# fixed reasoning effort; for Girdle it also turns routing off.
-base=$agent
-fixed_effort=
-for e in none minimal low; do
-  if [[ $agent == *-$e ]]; then
-    base=${agent%-"$e"}
-    reasoning=$e
-    fixed_effort=1
-  fi
-done
-# A -r<N> suffix (before any effort) races N copies of each LLM call.
-race=
-if [[ $base =~ ^(.*)-r([0-9]+)$ ]]; then
-  base=${BASH_REMATCH[1]}
-  race=${BASH_REMATCH[2]}
-fi
-
-# -lean (last) leaves out compaction and reproduce.
-lean=
-if [[ $base == *-lean ]]; then
-  base=${base%-lean}
-  lean=1
-fi
-# -mix sends every call after a request's first, and the cross-check writer,
-# to a fast model; -oss sends every call there.
-fastargs=()
-fast_model=${BENCH_FAST_MODEL:-openai/gpt-oss-120b}
-if [[ $base == *-mix ]]; then
-  base=${base%-mix}
-  fastargs=(--fast-model "$fast_model")
-elif [[ $base == *-oss ]]; then
-  base=${base%-oss}
-  fastargs=(--fast-model "$fast_model" --fast-all)
-elif [[ $base == *-osshigh ]]; then
-  base=${base%-osshigh}
-  fastargs=(--fast-model "$fast_model" --fast-all --fast-effort high)
-elif [[ $base == *-mixhigh ]]; then
-  base=${base%-mixhigh}
-  fastargs=(--fast-model "$fast_model" --fast-effort high)
-fi
-
 start=$(date +%s)
 case $base in
 girdle | girdle-nojev | girdle-fast)
   extra=()
   [[ $base == girdle-nojev ]] && extra+=(--no-checkpoints)
   [[ $base == girdle-fast ]] && extra+=(--fast)
-  [[ -n $fixed_effort ]] && extra+=(--no-route)
-  [[ -n $race ]] && extra+=(--race "$race")
-  extra+=(${fastargs[@]+"${fastargs[@]}"})
-  [[ -n $lean ]] && extra+=(--lean)
+  extra+=(${flags[@]+"${flags[@]}"})
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
     -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null

@@ -3,7 +3,6 @@ package kernel
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -326,91 +325,6 @@ func TestHeartbeatNudgesALoop(t *testing.T) {
 	s.Run(ctx, "Find where old is used.")
 	if len(nudges) != 1 || nudges[0].Reason != "looping" || lookups != checkpoint.DefaultHeartbeatPolicy.Every {
 		t.Fatalf("%d nudges (%v) after %d lookups", len(nudges), nudges, lookups)
-	}
-}
-
-// countingModel counts the calls it serves.
-type countingModel struct {
-	fantasy.LanguageModel
-	n *atomic.Int32
-}
-
-func (m countingModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
-	m.n.Add(1)
-	return m.LanguageModel.Stream(ctx, call)
-}
-
-func TestFastModelServesLaterCalls(t *testing.T) {
-	for _, all := range []bool{false, true} {
-		t.Run(map[bool]string{false: "later calls", true: "every call"}[all], func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			var mainCalls, fastCalls atomic.Int32
-			opts := func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} }
-			s := NewSession(Config{
-				Model: countingModel{scriptedModel{}, &mainCalls}, ModelName: "main", Jev: fakeJev(t), Dir: dir,
-				Policy: checkpoint.DefaultPolicy, Checkpoints: true,
-				Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy, EffortOptions: opts,
-				Snapshot: true, Batch: true, Speculate: true,
-				FastModel: countingModel{scriptedModel{}, &fastCalls}, FastModelName: "fast", FastOptions: opts, FastAll: all,
-			})
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			// Without early stop: an apply, then a reply, so two calls.
-			if outcome, _ := s.Run(ctx, "Replace old with new in a.txt."); outcome != OutcomeDone {
-				t.Fatalf("outcome %s", outcome)
-			}
-			wantMain, wantFast := int32(1), int32(1)
-			if all {
-				wantMain, wantFast = 0, 2
-			}
-			if mainCalls.Load() != wantMain || fastCalls.Load() != wantFast {
-				t.Fatalf("main %d, fast %d calls; want %d and %d", mainCalls.Load(), fastCalls.Load(), wantMain, wantFast)
-			}
-			if u := s.Usage(); all && u.FastOutputTokens != u.OutputTokens {
-				t.Fatalf("usage not all fast: %+v", u)
-			}
-		})
-	}
-}
-
-// failingModel fails every call the way a provider does when it can't parse
-// the model's output.
-type failingModel struct {
-	fantasy.LanguageModel
-	n *atomic.Int32
-}
-
-func (m failingModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
-	m.n.Add(1)
-	return func(yield func(fantasy.StreamPart) bool) {
-		yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeError, Error: errors.New("Parsing failed")})
-	}, nil
-}
-
-func TestFastModelFailureFallsBackToTheMainModel(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var mainCalls, fastCalls atomic.Int32
-	opts := func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} }
-	s := NewSession(Config{
-		Model: countingModel{scriptedModel{}, &mainCalls}, ModelName: "main", Jev: fakeJev(t), Dir: dir,
-		Policy: checkpoint.DefaultPolicy, Checkpoints: true,
-		Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy, EffortOptions: opts,
-		Snapshot: true, Batch: true, Speculate: true,
-		FastModel: failingModel{n: &fastCalls}, FastModelName: "fast", FastOptions: opts, FastAll: true,
-	})
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if outcome, reason := s.Run(ctx, "Replace old with new in a.txt."); outcome != OutcomeDone {
-		t.Fatalf("Run = %s %s", outcome, reason)
-	}
-	if fastCalls.Load() == 0 || mainCalls.Load() != fastCalls.Load() {
-		t.Fatalf("fast %d, main %d calls: every failed fast call should fall back once", fastCalls.Load(), mainCalls.Load())
 	}
 }
 

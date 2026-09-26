@@ -52,24 +52,24 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
-		fast        = flag.Bool("fast", false, "fast flow: -snapshot -batch -early-stop -speculate -crosscheck -heartbeat, and -race 3 -hedge 3s unless set")
+		fast        = flag.Bool("fast", false, "fast flow: -snapshot -batch -early-stop -speculate -crosscheck -reproduce -heartbeat, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
 		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
 		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
 		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 1, or 3 with -fast)")
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
-		fastModel   = flag.String("fast-model", "", "OpenRouter model for every LLM call after a request's first, and the cross-check writer, for example openai/gpt-oss-120b")
-		fastProv    = flag.String("fast-provider", "groq,cerebras", "comma-separated OpenRouter providers to try, in order, for -fast-model")
-		fastAll     = flag.Bool("fast-all", false, "with -fast-model, use it for every LLM call")
-		fastEffort  = flag.String("fast-effort", "", "with -fast-model, the reasoning effort for its calls (default: the routed effort)")
-		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed")
+		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed (shelved: not part of -fast)")
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
-		lean        = flag.Bool("lean", false, "with -fast, leave out -compact and -reproduce")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
 	)
 	flag.Parse()
+	// -fast turns a set of flags on. A flag set explicitly wins, so an
+	// ablation is -fast with one part set to false.
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	withFast := func(name string, v bool) bool { return v || *fast && !explicit[name] }
 
 	workDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -85,9 +85,9 @@ func run() int {
 	cfg.Policy.MaxNudges = *maxNudges
 	cfg.MaxStepsPerTurn = *maxSteps
 	cfg.Route = !*noJev && !*noRoute
-	cfg.Snapshot = *fast || *snapshot
-	cfg.Batch = *fast || *batch
-	cfg.EarlyStop = !*noJev && (*fast || *earlyStop)
+	cfg.Snapshot = withFast("snapshot", *snapshot)
+	cfg.Batch = withFast("batch", *batch)
+	cfg.EarlyStop = !*noJev && withFast("early-stop", *earlyStop)
 	cfg.Race = *raceFlag
 	if cfg.Race == 0 {
 		cfg.Race = 1
@@ -95,19 +95,12 @@ func run() int {
 			cfg.Race = 3
 		}
 	}
-	cfg.Speculate = cfg.Route && (*fast || *speculate)
-	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && (*fast || *crossCheck)
-	cfg.Heartbeat = !*noJev && (*fast || *heartbeat)
-	cfg.Compact = !*noJev && (*fast && !*lean || *compact)
+	cfg.Speculate = cfg.Route && withFast("speculate", *speculate)
+	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && withFast("crosscheck", *crossCheck)
+	cfg.Reproduce = cfg.Batch && withFast("reproduce", *reproduce)
+	cfg.Heartbeat = !*noJev && withFast("heartbeat", *heartbeat)
+	cfg.Compact = !*noJev && *compact
 	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
-	cfg.Reproduce = cfg.Batch && (*fast && !*lean || *reproduce)
-	if *fastModel != "" {
-		if err := addFastModel(ctx, &cfg, *fastModel, *fastProv); err != nil {
-			return fail(err)
-		}
-		cfg.FastAll = *fastAll
-		cfg.FastEffort = checkpoint.Effort(*fastEffort)
-	}
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
 	cfg.Hedge = *hedge
 	if cfg.Hedge < 0 {
@@ -207,34 +200,6 @@ func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoi
 		StepPolicy:      checkpoint.DefaultStepPolicy,
 		Checkpoints:     checkpoints,
 	}, nil
-}
-
-// addFastModel adds a second model on OpenRouter, pinned to the given
-// providers in order, with fallbacks allowed.
-func addFastModel(ctx context.Context, cfg *kernel.Config, name, providers string) error {
-	key := os.Getenv("OPENROUTER_API_KEY")
-	provider, err := openrouter.New(openrouter.WithAPIKey(key))
-	if err != nil {
-		return err
-	}
-	model, err := provider.LanguageModel(ctx, name)
-	if err != nil {
-		return err
-	}
-	var order []string
-	for p := range strings.SplitSeq(providers, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			order = append(order, p)
-		}
-	}
-	cfg.FastModel, cfg.FastModelName = model, name
-	cfg.FastOptions = func(e checkpoint.Effort) fantasy.ProviderOptions {
-		return openrouter.NewProviderOptions(&openrouter.ProviderOptions{
-			Reasoning: &openrouter.ReasoningOptions{Effort: new(openrouter.ReasoningEffort(e))},
-			Provider:  &openrouter.Provider{Order: order, AllowFallbacks: new(true)},
-		})
-	}
-	return nil
 }
 
 func defaultLogPath() string {

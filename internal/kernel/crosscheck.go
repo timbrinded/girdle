@@ -1,7 +1,6 @@
 package kernel
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -66,17 +65,14 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 			in, recorded = a, true
 			return fantasy.NewTextResponse("Recorded."), nil
 		})
-	// It runs on the fast model when there is one: it is mechanical work,
-	// and a slow writer holds up a quick agent.
-	model, fast, opts := s.cfg.Model, false, s.cfg.ProviderOptions
-	switch {
-	case s.cfg.FastModel != nil:
-		model, fast, opts = s.cfg.FastModel, true, s.cfg.FastOptions(cmp.Or(s.cfg.FastEffort, checkpoint.EffortLow))
-	case s.cfg.EffortOptions != nil:
+	// It is mechanical work, so it runs at low effort: a slow writer holds
+	// up a quick agent.
+	opts := s.cfg.ProviderOptions
+	if s.cfg.EffortOptions != nil {
 		opts = s.cfg.EffortOptions(checkpoint.EffortLow)
 	}
 	// The writer is hedged: a copy that hasn't answered in 2 s gets company.
-	agent := fantasy.NewAgent(race.New(model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace(fast)),
+	agent := fantasy.NewAgent(race.New(s.cfg.Model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace),
 		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
 		fantasy.WithTools(record),
 		fantasy.WithProviderOptions(opts),
@@ -93,8 +89,8 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 		return &crossCheck{none: "the call failed"}
 	}
 	u := usageOf(res.TotalUsage)
-	s.addCallUsage(u, fast)
-	s.emit(Event{Type: EventStep, DurationMS: time.Since(start).Milliseconds(), Usage: &u, Meta: map[string]string{"role": "crosscheck", "model": map[bool]string{true: "fast", false: "main"}[fast]}})
+	s.addUsage(u)
+	s.emit(Event{Type: EventStep, DurationMS: time.Since(start).Milliseconds(), Usage: &u, Meta: map[string]string{"role": "crosscheck"}})
 	switch {
 	case !recorded:
 		return &crossCheck{none: "no apply call: " + clipMiddle(res.Response.Content.Text(), 300)}

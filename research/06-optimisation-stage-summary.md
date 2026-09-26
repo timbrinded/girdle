@@ -1,6 +1,6 @@
 # Optimisation stage summary: where the fast flow stands
 
-26 September 2026. Branch `feat/scale-bench`. Decisions 0005 to 0011.
+26 September 2026. Branch `feat/scale-bench`. Decisions 0005 to 0012.
 
 ## Headline
 
@@ -27,9 +27,10 @@ Cold, with a fresh copy every run, the gap is 1.24× on real repositories and 2.
 7. **Safety nets.**
    - API names attached to failed checks.
    - A stuck-and-drift heartbeat.
-   - Compaction of stale output.
    - Whitespace-tolerant edits.
    - Pipefail checks.
+
+Compaction of stale output is shelved: it is built, but off in `-fast` until a suite has sessions long enough to need it (0012).
 
 ## Explored and declined, with the evidence
 
@@ -38,7 +39,7 @@ Cold, with a fresh copy every run, the gap is 1.24× on real repositories and 2.
 | Split the implementation and tests into parallel calls | The implementation half does most of the reasoning, so no faster |
 | Race 5 copies | The first of five to finish is often the one that reasoned least, so more checks failed |
 | Minimal or no reasoning effort | Minimal lost spec-heavy tasks; "none" is rejected by this model |
-| A fast second model (gpt-oss-120b) | 3 to 6 times faster per call, but 11/18 to 13/18 on real repositories, and 3.5 to 5 times the cost |
+| A fast second model (gpt-oss-120b) | 3 to 6 times faster per call, but 11/18 to 13/18 on real repositories, and 3.5 to 5 times the cost. Code removed in 0012 |
 | Reuse losing race copies after a failed check | At most 7.9% of run time, realistically far less, and complex |
 | FFF (indexed search) | Search is under 0.1% of run time at these sizes; revisit for monorepos |
 | Warm the build cache, reorder the prompt for caching | Mainly benchmark artefacts; warm mode measures real use instead |
@@ -47,5 +48,9 @@ Cold, with a fresh copy every run, the gap is 1.24× on real repositories and 2.
 ## What would move it next
 
 - **Bigger and harder benchmarks.** Long, exploration-heavy tasks are where compaction, the heartbeat and API-name hints are built to help, and this benchmark barely exercises them. A SWE-bench-style subset is the next step.
-- **A better fast model.** The mixed-model machinery is in place, with its fallback. It needs a model that holds up on multi-step work.
+- **A better fast model.** It needs a model that holds up on multi-step work on its own. The mixed-model code was removed in 0012 and can be restored from git history.
 - **The long pole: learning an unfamiliar API.** gm-strike-tag stays roughly level with the default flow. That's a knowledge gap in the model, not the flow.
+
+## How new ideas are tested
+
+Each new idea runs against the current fast flow only, warm, on the tasks it targets: `girdle-fast` against `girdle-fast+<flag>`. The default flow and both full suites run only at milestones (0012).

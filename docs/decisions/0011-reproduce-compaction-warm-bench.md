@@ -8,10 +8,10 @@
   - **What it does.** apply takes an optional `reproduce` command for a bug fix. After a passing check it undoes the request's code changes for a moment and runs the command, then restores the changes. The tools remember each file's content from before the request first changed it, so fixes made across several applies are undone together.
   - **Why.** A test that passes on the old code doesn't reproduce the bug, so that apply's result becomes a failure and isn't taken as proof.
   - **Measured.** In the final round the agent set it 36 times. It confirmed 20 regression tests and caught 4 that didn't reproduce the bug, which the agent then fixed.
-- **Compaction** (on with `-fast`).
+- **Compaction** (on with `-fast`; shelved and off in 0012).
   - **What it does.** Every 8 steps Jev judges which older tool outputs over 2 KB are still needed. The 4 most recent are always kept. The rest become a one-line stub in every later prompt. Stubs are only ever added, so the prompt prefix changes rarely and stays cached.
   - **Measured.** Runs on these suites are short, so it ran 3 times and pruned nothing. It is built for long sessions this benchmark doesn't have.
-- **`-lean`** leaves both out, for comparison. Neither changed speed measurably:
+- **`-lean`** leaves both out, for comparison. Removed in 0012: `-fast -reproduce=false` does the same job now. Neither changed speed measurably:
   - Scale, warm: 33.2 s with both, 40.8 s without.
   - Scale, cold: 50.6 s with both, 44.3 s without.
 - **Warm benchmark mode** (`bench.sh -w`). Each agent works each task in one reused directory, warmed once by running the check and reset with git between reps, the way someone works in their own checkout. Its path stays the same, so compiler caches and prompt prefixes behave as they do in daily use. Cold mode, a fresh copy every run, remains the default.

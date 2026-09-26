@@ -69,10 +69,6 @@ type Usage struct {
 	CacheReadTokens int64   `json:"cache_read_tokens,omitzero"`
 	CostUSD         float64 `json:"cost_usd,omitzero"`
 	JevTokens       int64   `json:"jev_tokens,omitzero"`
-	// The share of the tokens above that the fast model used.
-	FastInputTokens     int64 `json:"fast_input_tokens,omitzero"`
-	FastOutputTokens    int64 `json:"fast_output_tokens,omitzero"`
-	FastCacheReadTokens int64 `json:"fast_cache_read_tokens,omitzero"`
 }
 
 // Log appends events to a JSONL file. It is safe for concurrent use.
