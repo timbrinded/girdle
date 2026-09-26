@@ -13,3 +13,8 @@
 - On the 13-task benchmark, racing 3 cut the mean from 21.8 s to 17.3 s and passed 39/39. The first cost figure was $0.0022 a run against $0.0009 unraced, both at the upper bound.
 - **Why 3 copies and not 5.** Racing 5 was slower (18.3 s against 15.4 s) and passed 38/39. The first of 5 answers to finish is often the one that reasoned least, so its checks failed 32 times against 10 for racing 3, and those failures cost extra fix-up steps. Many concurrent streams may also have queued at the provider.
 - **Why the lower cut.** js-csv scores 1.76 to 1.8, so it was routed to medium. At low it passed every run in both flows. In segment 1's low-effort experiment it passed 18/18, and in the fast flow 3/3, in 37 s against 48 s at medium. No benchmark task scores above 1.85.
+
+## Update 2026-09-26: hedging and measured cost
+
+- **Hedging.** Racing now hedges: a request's first call races every copy at once, and later calls start an extra copy only after `-hedge` (3 s with `-fast`) without an answer. Short exploration steps then cost one call.
+- **Cost accounting.** Pricing the losers' prompts as uncached overstated cost about 2.6 times, because cancelled copies share the prompt cache. Each loser is now priced like its winner, which is still an upper bound. OpenRouter's billed spend on the scale suite was $0.0055 a run for the fast flow and $0.0048 for the default flow. See 0007.

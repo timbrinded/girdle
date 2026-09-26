@@ -29,7 +29,10 @@ bench/validate.sh                 # every task fails untouched and passes its re
 bench/gate.sh                     # Segment 1 gate scenarios
 bench/bench.sh -r 3 -j 4          # full comparison: girdle, girdle-nojev, pi
 bench/bench.sh -a "girdle-fast girdle-fast-r1-low" -r 3   # fast flow; -r<N> sets racing, -low fixes the effort
+bench/bench.sh -s scale -a "girdle-fast girdle" -r 3       # six tasks on real repositories (goldmark, more-itertools)
 ```
+
+The scale suite's tasks name an upstream repository and commit in a `source` file. `bench/prepare.sh` clones each one once into `bench/.cache`, so their code is never vendored here.
 
 Early and private. See [CLAUDE.md](CLAUDE.md) for the North Star and how we work, and [research/](research/) for the background.
 
