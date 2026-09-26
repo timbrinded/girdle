@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -69,6 +70,89 @@ func TestOptionalParamsAreNotRequired(t *testing.T) {
 		info := tool.Info()
 		got := slices.Sorted(slices.Values(info.Required))
 		if !slices.Equal(got, slices.Sorted(slices.Values(want[info.Name]))) {
+			t.Errorf("%s: required = %v, want %v", info.Name, got, want[info.Name])
+		}
+	}
+}
+
+func TestExitCode(t *testing.T) {
+	cases := []struct {
+		in   string
+		code int
+		ok   bool
+	}{
+		{"ok\n[exit code 0]", 0, true},
+		{"FAIL\n[exit code 1]", 1, true},
+		{"prints [exit code 0] inside\n[exit code 2]", 2, true},
+		{"no trailer", 0, false},
+		{"[exit code x]", 0, false},
+	}
+	for _, c := range cases {
+		code, ok := ExitCode(c.in)
+		if code != c.code || ok != c.ok {
+			t.Errorf("ExitCode(%q) = (%d, %v), want (%d, %v)", c.in, code, ok, c.code, c.ok)
+		}
+	}
+}
+
+func TestApply(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var apply fantasy.AgentTool
+	for _, tool := range Batched(dir) {
+		if tool.Info().Name == "apply" {
+			apply = tool
+		}
+	}
+	run := func(in ApplyInput) fantasy.ToolResponse {
+		t.Helper()
+		raw, err := json.Marshal(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := apply.Run(t.Context(), fantasy.ToolCall{ID: "1", Name: "apply", Input: string(raw)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := run(ApplyInput{
+		Changes: []Change{
+			{Path: "a.txt", OldText: "world", NewText: "girdle"},
+			{Path: "sub/b.txt", Content: "new file\n"},
+		},
+		Check: "cat a.txt sub/b.txt",
+	})
+	if res.IsError || !strings.Contains(res.Content, "hello girdle") || !strings.Contains(res.Content, "new file") {
+		t.Fatalf("apply = %+v", res)
+	}
+	if code, ok := ExitCode(res.Content); !ok || code != 0 {
+		t.Fatalf("exit code = %d, %v", code, ok)
+	}
+
+	res = run(ApplyInput{
+		Changes: []Change{{Path: "a.txt", OldText: "missing", NewText: "x"}},
+		Check:   "echo should-not-run",
+	})
+	if !res.IsError || strings.Contains(res.Content, "should-not-run") {
+		t.Fatalf("failed change should skip the check: %+v", res)
+	}
+
+	paths, check, ok := ParseApply(`{"changes":[{"path":"a.go","old_text":"x","new_text":"y"},{"path":"a.go","content":"z"},{"path":"b.go","content":""}],"check":"go test ./..."}`)
+	if !ok || !slices.Equal(paths, []string{"a.go", "b.go"}) || check != "go test ./..." {
+		t.Fatalf("ParseApply = %v, %q, %v", paths, check, ok)
+	}
+}
+
+func TestBatchedRequiredParams(t *testing.T) {
+	want := map[string][]string{"read": {"path"}, "apply": {"changes"}, "bash": {"command"}}
+	for _, tool := range Batched(t.TempDir()) {
+		info := tool.Info()
+		got := slices.Sorted(slices.Values(info.Required))
+		if !slices.Equal(got, want[info.Name]) {
 			t.Errorf("%s: required = %v, want %v", info.Name, got, want[info.Name])
 		}
 	}

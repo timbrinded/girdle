@@ -23,6 +23,9 @@ const (
 	EventTurnEnd       EventType = "turn_end"
 	EventDecision      EventType = "decision"
 	EventRoute         EventType = "route"
+	EventSnapshot      EventType = "snapshot" // files sent with a request
+	EventStep          EventType = "step"     // one LLM call: timing and usage
+	EventRace          EventType = "race"     // a raced LLM call: estimated usage of the losing copies
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"
@@ -46,6 +49,10 @@ type Event struct {
 	Outcome  Outcome                   `json:"outcome,omitempty"`
 	Reason   string                    `json:"reason,omitempty"`
 	Meta     map[string]string         `json:"meta,omitempty"`
+	// TTFTMS is how long a step waited for its first streamed token, and
+	// DurationMS how long the LLM call took in all.
+	TTFTMS     int64 `json:"ttft_ms,omitzero"`
+	DurationMS int64 `json:"duration_ms,omitzero"`
 }
 
 // Usage is LLM token use for a turn or a run.

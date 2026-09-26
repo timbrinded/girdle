@@ -15,6 +15,7 @@ import (
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
 	"github.com/timbrinded/girdle/internal/kernel"
+	"github.com/timbrinded/girdle/internal/tools"
 )
 
 // Run starts the TUI and blocks until the user quits.
@@ -222,6 +223,10 @@ func describeDecision(d *checkpoint.Decision) string {
 	if d.Error != "" {
 		return fmt.Sprintf("jev unavailable → %s", d.Action)
 	}
+	if d.Checkpoint == "step_end" {
+		return fmt.Sprintf("jev · complete %.2f → %s (%s) · %dms",
+			d.Answers["complete"].Noul, d.Action, d.Rule, d.LatencyMS)
+	}
 	st := d.Answers["status"]
 	return fmt.Sprintf("jev · %s %.2f · evidence %.2f → %s (%s) · %dms",
 		st.Choice, st.Confidence, d.Answers["evidence"].Noul, d.Action, d.Rule, d.LatencyMS)
@@ -229,6 +234,9 @@ func describeDecision(d *checkpoint.Decision) string {
 
 // toolArg shows the argument people care about: the command or the path.
 func toolArg(input string) string {
+	if paths, check, ok := tools.ParseApply(input); ok && len(paths) > 0 {
+		return firstLines(strings.Join(paths, ", ")+" · check: "+check, 1)
+	}
 	var args map[string]any
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return firstLines(input, 1)

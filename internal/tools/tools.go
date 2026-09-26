@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -162,7 +163,23 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	case err != nil && code == -1:
 		text += "\n[" + err.Error() + "]"
 	}
-	return fantasy.NewTextResponse(fmt.Sprintf("%s\n[exit code %d]", strings.TrimRight(text, "\n"), code)), nil
+	return fantasy.NewTextResponse(fmt.Sprintf("%s\n%s%d]", strings.TrimRight(text, "\n"), exitTrailer, code)), nil
+}
+
+const exitTrailer = "[exit code "
+
+// ExitCode reads the exit code that the bash tool appends to its output.
+func ExitCode(result string) (int, bool) {
+	_, after, found := strings.CutLast(result, exitTrailer)
+	if !found {
+		return 0, false
+	}
+	num, ok := strings.CutSuffix(strings.TrimSpace(after), "]")
+	if !ok {
+		return 0, false
+	}
+	code, err := strconv.Atoi(num)
+	return code, err == nil
 }
 
 // clip keeps the head and tail of long output, where errors usually are. It

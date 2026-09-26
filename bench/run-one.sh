@@ -4,7 +4,9 @@
 #
 #   bench/run-one.sh <agent> <task> <rep> <outroot>
 #
-# Agents: girdle, girdle-nojev (checkpoints off), pi (vanilla Pi, run in tmux).
+# Agents: girdle, girdle-nojev (checkpoints off), girdle-fast (-fast flow),
+# pi (vanilla Pi, run in tmux). Girdle names take optional suffixes:
+# -r<N> races N copies of each LLM call, and -minimal or -low fixes the effort.
 # Expects OPENROUTER_API_KEY and TYPESAFE_API_KEY in the environment.
 set -uo pipefail
 
@@ -25,20 +27,32 @@ cp -R "$tdir/repo" "$work"
 (cd "$work" && git init -q && git add -A && git -c user.email=bench@girdle -c user.name=bench commit -qm init)
 prompt=$(cat "$tdir/task.md")
 
-# An agent name ending in -low runs at low reasoning effort; for Girdle it
-# also turns routing off so the effort stays fixed.
+# An agent name ending in an effort (-none, -minimal, -low) runs at that
+# fixed reasoning effort; for Girdle it also turns routing off.
 base=$agent
-if [[ $agent == *-low ]]; then
-  base=${agent%-low}
-  reasoning=low
+fixed_effort=
+for e in none minimal low; do
+  if [[ $agent == *-$e ]]; then
+    base=${agent%-"$e"}
+    reasoning=$e
+    fixed_effort=1
+  fi
+done
+# A -r<N> suffix (before any effort) races N copies of each LLM call.
+race=
+if [[ $base =~ ^(.*)-r([0-9]+)$ ]]; then
+  base=${BASH_REMATCH[1]}
+  race=${BASH_REMATCH[2]}
 fi
 
 start=$(date +%s)
 case $base in
-girdle | girdle-nojev)
+girdle | girdle-nojev | girdle-fast)
   extra=()
   [[ $base == girdle-nojev ]] && extra+=(--no-checkpoints)
-  [[ $agent == *-low ]] && extra+=(--no-route)
+  [[ $base == girdle-fast ]] && extra+=(--fast)
+  [[ -n $fixed_effort ]] && extra+=(--no-route)
+  [[ -n $race ]] && extra+=(--race "$race")
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
     -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null

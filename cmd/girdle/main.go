@@ -52,6 +52,11 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
+		fast        = flag.Bool("fast", false, "fast flow: same as -snapshot -batch -early-stop")
+		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
+		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
+		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
+		raceFlag    = flag.Int("race", 1, "send each LLM call this many times at once and keep the first complete answer")
 	)
 	flag.Parse()
 
@@ -69,6 +74,10 @@ func run() int {
 	cfg.Policy.MaxNudges = *maxNudges
 	cfg.MaxStepsPerTurn = *maxSteps
 	cfg.Route = !*noJev && !*noRoute
+	cfg.Snapshot = *fast || *snapshot
+	cfg.Batch = *fast || *batch
+	cfg.EarlyStop = !*noJev && (*fast || *earlyStop)
+	cfg.Race = *raceFlag
 
 	path := cmp.Or(*logPath, defaultLogPath())
 	log, err := kernel.OpenLog(path)
@@ -157,6 +166,7 @@ func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoi
 		Dir:             dir,
 		Policy:          checkpoint.DefaultPolicy,
 		RoutePolicy:     checkpoint.DefaultRoutePolicy,
+		StepPolicy:      checkpoint.DefaultStepPolicy,
 		Checkpoints:     checkpoints,
 	}, nil
 }
