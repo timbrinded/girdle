@@ -1,0 +1,1 @@
+The email validation in `handlers.py` is duplicated in three handlers. Extract it into a single function `is_valid_email(email: str) -> bool` in `handlers.py` and use it in all three handlers. Behaviour must stay exactly the same. Add unit tests for `is_valid_email`, and make sure all the tests pass.

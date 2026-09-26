@@ -1,0 +1,1 @@
+Add a `context.Context` as the first parameter of `Store.Get` and `Store.Put` in `store/store.go`, and update every caller. Callers that already have a context must pass it on; the others should use `context.Background()`. `Get` and `Put` must return the context's error if it is already cancelled. Make sure everything builds and all the tests pass.
