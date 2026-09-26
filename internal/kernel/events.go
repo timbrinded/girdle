@@ -1,0 +1,100 @@
+package kernel
+
+import (
+	"encoding/json/v2"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/timbrinded/girdle/internal/checkpoint"
+)
+
+// EventType names what happened. The event log is one JSON object per line.
+type EventType string
+
+const (
+	EventSessionStart  EventType = "session_start"
+	EventUserMessage   EventType = "user_message"
+	EventTextDelta     EventType = "text_delta" // streamed to the UI, never logged
+	EventAssistantText EventType = "assistant_text"
+	EventToolCall      EventType = "tool_call"
+	EventToolResult    EventType = "tool_result"
+	EventTurnEnd       EventType = "turn_end"
+	EventDecision      EventType = "decision"
+	EventRoute         EventType = "route"
+	EventNudge         EventType = "nudge"
+	EventRunEnd        EventType = "run_end"
+	EventError         EventType = "error"
+)
+
+// Event is one thing that happened in a session. Only the fields relevant to
+// its type are set.
+type Event struct {
+	Time     time.Time                 `json:"time"`
+	Session  string                    `json:"session"`
+	Type     EventType                 `json:"type"`
+	Text     string                    `json:"text,omitempty"`
+	Tool     string                    `json:"tool,omitempty"`
+	CallID   string                    `json:"call_id,omitempty"`
+	Input    string                    `json:"input,omitempty"`
+	IsError  bool                      `json:"is_error,omitzero"`
+	Steps    int                       `json:"steps,omitzero"`
+	Usage    *Usage                    `json:"usage,omitempty"`
+	Decision *checkpoint.Decision      `json:"decision,omitempty"`
+	Route    *checkpoint.RouteDecision `json:"route,omitempty"`
+	Outcome  Outcome                   `json:"outcome,omitempty"`
+	Reason   string                    `json:"reason,omitempty"`
+	Meta     map[string]string         `json:"meta,omitempty"`
+}
+
+// Usage is LLM token use for a turn or a run.
+type Usage struct {
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	ReasoningTokens int64   `json:"reasoning_tokens,omitzero"`
+	CacheReadTokens int64   `json:"cache_read_tokens,omitzero"`
+	CostUSD         float64 `json:"cost_usd,omitzero"`
+	JevTokens       int64   `json:"jev_tokens,omitzero"`
+}
+
+// Log appends events to a JSONL file. It is safe for concurrent use.
+type Log struct {
+	mu sync.Mutex
+	f  *os.File
+}
+
+// OpenLog creates the log file and its directory.
+func OpenLog(path string) (*Log, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return &Log{f: f}, nil
+}
+
+// Write appends one event. Streaming deltas are skipped.
+func (l *Log) Write(e Event) error {
+	if l == nil || e.Type == EventTextDelta {
+		return nil
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, err = l.f.Write(append(b, '\n'))
+	return err
+}
+
+// Close closes the file.
+func (l *Log) Close() error {
+	if l == nil {
+		return nil
+	}
+	return l.f.Close()
+}

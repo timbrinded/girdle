@@ -43,7 +43,7 @@ Girdle is succeeding when, in an unattended session on real work, it:
 - **Jev:** `POST https://api.typesafe.ai/v1/systemone` with `Authorization: Bearer $TYPESAFE_API_KEY`.
   - The key is set in `~/.zshrc`, not in non-interactive shells.
   - Never print or log the key.
-  - Pin `jev-1.13` while thresholds are tuned against it.
+  - Pin `jev-1.13.0` while thresholds are tuned against it.
 
 ## How we work
 There is no up-front implementation plan. We deliver in **segments**:
