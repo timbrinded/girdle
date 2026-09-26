@@ -40,7 +40,7 @@ Same model (`meta/muse-spark-1.3-contributor`), 13 tasks with hidden tests, head
 | Default flow | 64/65 | 37.5 s | 28 s | 82 s | $0.0022 |
 | Pi | 65/65 | 40.7 s | 30 s | 89 s | $0.0030 |
 
-- **The fast flow is 2.3 to 2.6 times faster than the default flow and Pi, and faster on every task.** The gap is largest on short tasks. go-three-bugs took 6 s against 25 s, and py-dedupe 6 s against 21 s.
+- **The fast flow is 2.3 to 2.5 times faster than the default flow and Pi, and faster on every task in both runs.** The gap is largest on short tasks. go-three-bugs took 6 s against 25 s, and py-dedupe 6 s against 21 s.
 - **Reliability held.** Over both runs each Girdle flow passed 129/130. The two misses were js-slugify spec edge cases, one per flow, where the model's own tests agreed with its wrong code.
 - **Cost is an upper bound.** Racing's cancelled copies are counted as if each used as many tokens as the winner. At that bound the fast flow costs about 30% more than the default flow and still less than Pi.
 
@@ -53,7 +53,7 @@ Same model (`meta/muse-spark-1.3-contributor`), 13 tasks with hidden tests, head
 | Jev step-end check | 0.3 s |
 | Jev routing | 0 s: it runs alongside the first LLM call |
 
-About two thirds of runs finish in one LLM step. The rest need a fix-up after a failed check, or a second step after Jev reads the task as not yet complete.
+51 of 65 runs (about four in five) finished in one LLM step. The rest need a fix-up after a failed check, or a second step after Jev reads the task as not yet complete.
 
 ## What didn't help
 
