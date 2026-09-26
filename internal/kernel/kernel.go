@@ -72,6 +72,9 @@ type Config struct {
 	// Race sends each LLM call this many times at once and keeps the first
 	// complete answer. Below 2, calls are not raced.
 	Race int
+	// Speculate starts a request's first LLM call on the usual effort while
+	// Jev routes it, instead of waiting for the route. It needs Route.
+	Speculate bool
 }
 
 // Session is one conversation in one working directory.
@@ -84,9 +87,12 @@ type Session struct {
 	history []fantasy.Message
 	steps   []string
 	mu      sync.Mutex // guards usage while LLM calls run concurrently
+	emitMu  sync.Mutex // serialises emit
 	usage   Usage
 	// callOptions override the agent's provider options for this run.
 	callOptions fantasy.ProviderOptions
+	// routing delivers Jev's route while the first call runs on a guess.
+	routing chan checkpoint.RouteDecision
 
 	// Facts about the current request, for the step-end checkpoint.
 	edited  map[string]bool // files changed by a successful edit or apply
@@ -103,7 +109,7 @@ func NewSession(cfg Config) *Session {
 	if cfg.Batch {
 		s.tools = tools.Batched(cfg.Dir)
 	}
-	s.model = race.New(cfg.Model, cfg.Race, s.noteRace)
+	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.noteRace), s: s}
 	s.agent = fantasy.NewAgent(
 		s.model,
 		fantasy.WithSystemPrompt(systemPrompt(cfg)),
@@ -121,6 +127,7 @@ func NewSession(cfg Config) *Session {
 		"batch":       fmt.Sprint(cfg.Batch),
 		"early_stop":  fmt.Sprint(cfg.EarlyStop),
 		"race":        fmt.Sprint(max(cfg.Race, 1)),
+		"speculate":   fmt.Sprint(cfg.Speculate),
 	}})
 	return s
 }
@@ -162,7 +169,15 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	if s.cfg.Snapshot {
 		wg.Go(func() { snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget)) })
 	}
-	s.route(ctx, prompt)
+	if s.routingOn() && s.cfg.Speculate {
+		// The goroutine gets its own copy of the channel: the first LLM call
+		// takes s.routing and clears it, possibly before the goroutine runs.
+		routing := make(chan checkpoint.RouteDecision, 1)
+		s.routing = routing
+		go func() { routing <- s.routeDecision(ctx, prompt) }()
+	} else {
+		s.route(ctx, prompt)
+	}
 	wg.Wait()
 	msg := prompt
 	if s.cfg.Snapshot {
@@ -189,10 +204,20 @@ func (s *Session) resetFacts() {
 // route asks Jev how hard the request is and sets this run's reasoning effort.
 func (s *Session) route(ctx context.Context, request string) {
 	s.callOptions = nil
-	if !s.cfg.Route || s.cfg.Jev == nil || s.cfg.EffortOptions == nil {
-		return
+	if s.routingOn() {
+		s.applyRoute(s.routeDecision(ctx, request))
 	}
-	d := checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy, checkpoint.EffortMedium)
+}
+
+func (s *Session) routingOn() bool {
+	return s.cfg.Route && s.cfg.Jev != nil && s.cfg.EffortOptions != nil
+}
+
+func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.RouteDecision {
+	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy, checkpoint.EffortMedium)
+}
+
+func (s *Session) applyRoute(d checkpoint.RouteDecision) {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	s.callOptions = s.cfg.EffortOptions(d.Effort)
 	s.emit(Event{Type: EventRoute, Route: &d})
@@ -439,7 +464,12 @@ func (s *Session) end(o Outcome, reason string) (Outcome, string) {
 	return o, reason
 }
 
+// emit logs an event and passes it to cfg.Emit. Raced and speculative LLM
+// calls report from their own goroutines, so emits are serialised: callers
+// of Emit never see two events at once, and the log stays in time order.
 func (s *Session) emit(e Event) {
+	s.emitMu.Lock()
+	defer s.emitMu.Unlock()
 	e.Time = time.Now()
 	e.Session = s.ID
 	if err := s.cfg.Log.Write(e); err != nil && s.cfg.Emit != nil {

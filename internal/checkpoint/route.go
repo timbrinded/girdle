@@ -40,9 +40,12 @@ type RoutePolicy struct {
 
 // DefaultRoutePolicy routes most requests to low effort. In the 2026-09-26
 // benchmark, low effort with the turn-end checkpoints passed every
-// spec-heavy task that medium did, in about half the time. Only requests Jev
-// scores near "hard" get more effort. Retune from the decision log.
-var DefaultRoutePolicy = RoutePolicy{LowBelow: 1.7, HighFrom: 1.9}
+// spec-heavy task that medium did, in about half the time. The low cut moved
+// from 1.7 to 1.85 the same day: js-csv, scored 1.76 to 1.8, passed every run
+// at low in both flows, and in the fast flow low took 37 s against 48 s at
+// medium. Only requests Jev scores near "hard" get more effort. Retune from
+// the decision log.
+var DefaultRoutePolicy = RoutePolicy{LowBelow: 1.85, HighFrom: 1.9}
 
 // RouteDecision records the routing checkpoint.
 type RouteDecision struct {

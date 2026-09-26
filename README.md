@@ -16,6 +16,8 @@ bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it
 
 Useful flags: `-C dir`, `-model`, `-reasoning`, `-json` (headless events as JSON lines), `-no-checkpoints` (turn Jev off), `-log path`.
 
+`-fast` turns on the fast flow, which finishes most tasks in one LLM step. The repository's files go out with the request. One `apply` call makes every change and runs a check. Jev ends the run as soon as the check's result shows the task done. Each LLM call is raced three times, and the first call starts before routing finishes. See [docs/decisions/0005-fast-flow.md](docs/decisions/0005-fast-flow.md) and [0006](docs/decisions/0006-racing-and-speculative-routing.md).
+
 Every session writes an event log, including each Jev decision, to `~/.local/state/girdle/sessions/`.
 
 ## Benchmark
@@ -26,6 +28,7 @@ Every session writes an event log, including each Jev decision, to `~/.local/sta
 bench/validate.sh                 # every task fails untouched and passes its reference solution
 bench/gate.sh                     # Segment 1 gate scenarios
 bench/bench.sh -r 3 -j 4          # full comparison: girdle, girdle-nojev, pi
+bench/bench.sh -a "girdle-fast girdle-fast-r1-low" -r 3   # fast flow; -r<N> sets racing, -low fixes the effort
 ```
 
 Early and private. See [CLAUDE.md](CLAUDE.md) for the North Star and how we work, and [research/](research/) for the background.
