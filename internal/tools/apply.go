@@ -113,3 +113,12 @@ func ParseApply(input string) (paths []string, check string, ok bool) {
 	}
 	return paths, in.Check, true
 }
+
+// RunCheck runs a check command in dir the way apply does, with pipefail,
+// and returns its output and exit code. ok is false if the exit code is
+// missing from the output.
+func RunCheck(ctx context.Context, dir, command string) (out string, code int, ok bool) {
+	res, _ := toolset{dir: dir}.bash(ctx, bashInput{Command: "set -o pipefail\n" + command}, fantasy.ToolCall{})
+	code, ok = ExitCode(res.Content)
+	return res.Content, code, ok
+}

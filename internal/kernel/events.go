@@ -23,9 +23,10 @@ const (
 	EventTurnEnd       EventType = "turn_end"
 	EventDecision      EventType = "decision"
 	EventRoute         EventType = "route"
-	EventSnapshot      EventType = "snapshot" // files sent with a request
-	EventStep          EventType = "step"     // one LLM call: timing and usage
-	EventRace          EventType = "race"     // a raced LLM call: estimated usage of the losing copies
+	EventSnapshot      EventType = "snapshot"   // files sent with a request
+	EventStep          EventType = "step"       // one LLM call: timing and usage
+	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
+	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, not ready or none written
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"

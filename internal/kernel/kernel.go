@@ -80,6 +80,10 @@ type Config struct {
 	// Speculate starts a request's first LLM call on the usual effort while
 	// Jev routes it, instead of waiting for the route. It needs Route.
 	Speculate bool
+	// CrossCheck writes an independent test of each request in the
+	// background and runs it once the agent's own check passes. It needs
+	// Batch and EarlyStop.
+	CrossCheck bool
 }
 
 // Session is one conversation in one working directory.
@@ -100,6 +104,10 @@ type Session struct {
 	routing chan checkpoint.RouteDecision
 	// called is set once a request's first LLM call has started.
 	called atomic.Bool
+	// cross delivers this request's cross-check, until it has run.
+	cross chan *crossCheck
+	// crossFeedback is a failed cross-check waiting to go to the LLM.
+	crossFeedback string
 
 	// Facts about the current request, for the step-end checkpoint.
 	edited  map[string]bool // files changed by a successful edit or apply
@@ -135,6 +143,7 @@ func NewSession(cfg Config) *Session {
 		"early_stop":  fmt.Sprint(cfg.EarlyStop),
 		"race":        fmt.Sprint(max(cfg.Race, 1)),
 		"speculate":   fmt.Sprint(cfg.Speculate),
+		"crosscheck":  fmt.Sprint(cfg.CrossCheck),
 	}})
 	return s
 }
@@ -197,6 +206,10 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		msg = snap.Text + "\n\n" + prompt
 	}
 	s.history = append(s.history, fantasy.NewUserMessage(msg))
+	s.cross = nil
+	if s.crossCheckOn() {
+		s.startCrossCheck(ctx)
+	}
 	return s.loop(ctx, prompt, true)
 }
 
@@ -250,6 +263,14 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 			if early {
 				return s.finishEarly()
 			}
+			if fb := s.crossFeedback; fb != "" {
+				// The agent's check passed but the cross-check failed: let
+				// it look before anyone calls the task done.
+				s.crossFeedback = ""
+				s.emit(Event{Type: EventNudge, Text: fb, Reason: "crosscheck"})
+				s.history = append(s.history, fantasy.NewUserMessage(fb))
+				continue
+			}
 			lastText = text
 		}
 		callLLM = true
@@ -293,6 +314,14 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			// checkpoint judges it.
 			if len(last.Content.ToolCalls()) == 0 {
 				return false
+			}
+			// Before asking Jev, run the independent cross-check once, if
+			// the agent's own check just passed.
+			if s.cross != nil && s.lastOK && len(s.edited) > 0 {
+				if fb := s.runCrossCheck(ctx); fb != "" {
+					s.crossFeedback = fb
+					return true
+				}
 			}
 			early = s.stepEnd(ctx, task, requirements, last.Content.Text())
 			return early

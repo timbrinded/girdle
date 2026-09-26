@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +114,94 @@ func TestFastFlowEndToEnd(t *testing.T) {
 			}
 			if !routed {
 				t.Fatal("no route event")
+			}
+		})
+	}
+}
+
+// crossModel is scriptedModel plus a cross-check writer: asked for a
+// cross-check, it writes a test file whose check passes or fails.
+type crossModel struct {
+	fantasy.LanguageModel
+	crossPasses bool
+}
+
+func (m crossModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	last := call.Prompt[len(call.Prompt)-1]
+	isCross := false
+	for _, p := range last.Content {
+		if t, ok := fantasy.AsMessagePart[fantasy.TextPart](p); ok && strings.Contains(t.Text, "Check its work independently") {
+			isCross = true
+		}
+	}
+	if !isCross {
+		return scriptedModel{}.Stream(ctx, call)
+	}
+	check := "grep -q new a.txt && test -f girdle_crosscheck_test.txt"
+	if !m.crossPasses {
+		check = "grep -q brand-new a.txt"
+	}
+	input, _ := json.Marshal(map[string]any{
+		"changes": []map[string]string{{"path": "girdle_crosscheck_test.txt", "content": "cross"}},
+		"check":   check,
+	})
+	return func(yield func(fantasy.StreamPart) bool) {
+		if yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: "x-1", ToolCallName: "apply", ToolCallInput: string(input)}) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+		}
+	}, nil
+}
+
+func TestCrossCheck(t *testing.T) {
+	for _, passes := range []bool{true, false} {
+		t.Run(map[bool]string{true: "passes", false: "fails"}[passes], func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			var events []Event
+			s := NewSession(Config{
+				Model: crossModel{crossPasses: passes}, ModelName: "scripted", Jev: fakeJev(t), Dir: dir,
+				Policy: checkpoint.DefaultPolicy, Checkpoints: true,
+				Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
+				EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
+				Snapshot:      true, Batch: true, EarlyStop: true, StepPolicy: checkpoint.DefaultStepPolicy,
+				Race: 1, Speculate: true, CrossCheck: true,
+				Emit: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			outcome, reason := s.Run(ctx, "Replace the word old with new in a.txt.")
+
+			var cross, nudge []Event
+			for _, e := range events {
+				switch {
+				case e.Type == EventCrossCheck:
+					cross = append(cross, e)
+				case e.Type == EventNudge && e.Reason == "crosscheck":
+					nudge = append(nudge, e)
+				}
+			}
+			if len(cross) != 1 {
+				t.Fatalf("%d cross-check events", len(cross))
+			}
+			if _, err := os.Stat(filepath.Join(dir, "girdle_crosscheck_test.txt")); !os.IsNotExist(err) {
+				t.Fatal("the cross-check file was left behind")
+			}
+			if passes {
+				if cross[0].Reason != "passed" || len(nudge) != 0 || outcome != OutcomeDone || reason != "done_early" {
+					t.Fatalf("cross %q, %d nudges, Run = %s %s", cross[0].Reason, len(nudge), outcome, reason)
+				}
+				return
+			}
+			if cross[0].Reason != "failed" || len(nudge) != 1 || !strings.Contains(nudge[0].Text, "brand-new") {
+				t.Fatalf("cross %q, nudges %v", cross[0].Reason, nudge)
+			}
+			// The scripted model answers the feedback with a reply; the
+			// turn-end checkpoint then finishes the run.
+			if outcome != OutcomeDone {
+				t.Fatalf("Run = %s %s", outcome, reason)
 			}
 		})
 	}
