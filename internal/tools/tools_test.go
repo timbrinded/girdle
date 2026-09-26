@@ -153,7 +153,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestBatchedRequiredParams(t *testing.T) {
-	want := map[string][]string{"read": {"path"}, "apply": {"changes", "check"}, "bash": {"command"}}
+	want := map[string][]string{"read": {"path"}, "apply": {"changes", "check"}, "bash": {"command"}, "search": {"pattern"}, "definition": {"name"}}
 	for _, tool := range Batched(t.TempDir()) {
 		info := tool.Info()
 		got := slices.Sorted(slices.Values(info.Required))

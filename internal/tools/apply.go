@@ -10,17 +10,18 @@ import (
 	"charm.land/fantasy"
 )
 
-// Batched returns the tools for the fast flow: read, apply and bash. apply
-// takes every change plus the command that checks them, so one LLM step can
-// both change and verify the code. Each LLM step costs seconds of latency,
+// Batched returns the tools for the fast flow: read, search, definition,
+// apply and bash. apply takes every change plus the command that checks
+// them, so one LLM step can both change and verify the code, and search and
+// definition find code in one step. Each LLM step costs seconds of latency,
 // so fewer, larger steps finish sooner.
 func Batched(dir string) []fantasy.AgentTool {
 	t := toolset{dir: dir}
-	return []fantasy.AgentTool{
+	return append([]fantasy.AgentTool{
 		fantasy.NewAgentTool("read", "Read a text file. Returns up to 2000 lines starting at offset (1-based).", t.read),
 		fantasy.NewAgentTool("apply", ApplyDescription, t.apply),
 		fantasy.NewAgentTool("bash", "Run a shell command in the working directory and return its combined output and exit code.", t.bash),
-	}
+	}, CodeTools(dir)...)
 }
 
 // ApplyDescription is the apply tool's description, shared by every tool that
@@ -38,7 +39,7 @@ type Change struct {
 
 // ApplyInput is the apply tool's input.
 type ApplyInput struct {
-	Changes Changes `json:"changes" description:"Every edit and file write the task needs, applied in order."`
+	Changes Changes `json:"changes" description:"Every edit and file write the task needs, applied in order. Leave it empty to only run the check."`
 	Check   string  `json:"check" description:"Shell command that proves the task is done: build and run the tests, plus quick checks for anything the tests can't show, for example grep that an old name is gone. Don't hide its exit code."`
 }
 

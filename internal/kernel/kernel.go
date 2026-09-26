@@ -167,7 +167,9 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	var snap Snapshot
 	var wg sync.WaitGroup
 	if s.cfg.Snapshot {
-		wg.Go(func() { snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget)) })
+		wg.Go(func() {
+			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt)
+		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
 		// The goroutine gets its own copy of the channel: the first LLM call
@@ -366,8 +368,10 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 			s.edited[p] = true
 		}
 	case "bash":
+		// With apply, checks go through apply: a grep that exits 0 is not
+		// evidence the task is done.
 		code, ok := tools.ExitCode(text)
-		s.lastOK = ok && code == 0 && !isErr
+		s.lastOK = !s.cfg.Batch && ok && code == 0 && !isErr
 		s.lastCmd = inputField(call.Input, "command")
 	case "apply":
 		// An apply that failed may have applied some changes, but its check
@@ -508,7 +512,7 @@ When you finish, reply briefly with what you changed and the evidence that it wo
 	if cfg.Snapshot {
 		b.WriteString(`
 
-Each request starts with a repository snapshot: every file, and the full text of each one that fits. It was taken just before the request, so work from it. Don't list the directory or read those files again; only read a file the snapshot left out.`)
+Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't list the directory or read those files again. For a large one it lists every file and shows the definitions and uses of the code the request names; find anything else with search and definition, asking for several things in one response when you can.`)
 	}
 	if cfg.Batch {
 		b.WriteString(`

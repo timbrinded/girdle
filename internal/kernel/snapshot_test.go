@@ -3,6 +3,7 @@ package kernel
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,23 +33,54 @@ func TestTakeSnapshot(t *testing.T) {
 		"node_modules/dep/a.js": "ignored",
 		".git/config":           "ignored",
 	})
-	snap := TakeSnapshot(t.Context(), dir, 100)
+	snap := TakeSnapshot(t.Context(), dir, 1000, "")
 
-	if snap.Files != 4 || snap.Included != 2 {
-		t.Fatalf("Files=%d Included=%d, want 4 and 2", snap.Files, snap.Included)
+	if snap.Files != 4 || snap.Included != 3 {
+		t.Fatalf("Files=%d Included=%d, want 4 and 3", snap.Files, snap.Included)
 	}
 	for _, want := range []string{
-		`<file path="main.go">`, "func main() {}", `<file path="sub/util.go">`,
-		"- logo.png (binary, not included)", "- big.txt (500 B, not included",
+		`<file path="main.go">`, "func main() {}", `<file path="sub/util.go">`, `<file path="big.txt">`,
+		"- logo.png (binary, not included)",
 	} {
 		if !strings.Contains(snap.Text, want) {
 			t.Errorf("snapshot is missing %q:\n%s", want, snap.Text)
 		}
 	}
-	for _, unwanted := range []string{"node_modules", ".git/config", "xxxxxxxx"} {
+	for _, unwanted := range []string{"node_modules", ".git/config"} {
 		if strings.Contains(snap.Text, unwanted) {
 			t.Errorf("snapshot should not contain %q", unwanted)
 		}
+	}
+}
+
+func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"price.go":   "package shop\n\n// computeTotal returns the total.\nfunc computeTotal(qty, unit int) int {\n\treturn qty * unit\n}\n",
+		"cart.go":    "package shop\n\nfunc cart() int { return computeTotal(2, 3) }\n",
+		"notes.md":   strings.Repeat("unrelated prose\n", 200),
+		"config.yml": "a: 1\n",
+	})
+	snap := TakeSnapshot(t.Context(), dir, 1000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal` and update `config.yml`.")
+	for _, want := range []string{
+		"too large to include in full", "- notes.md", "- price.go",
+		`<definition name="computeTotal">`, "price.go:3-6", "func computeTotal(qty, unit int) int {",
+		`<uses name="computeTotal">`, "cart.go:3:", `<file path="config.yml">`, `<uses name="sumTotal">`,
+	} {
+		if !strings.Contains(snap.Text, want) {
+			t.Errorf("snapshot is missing %q:\n%s", want, snap.Text)
+		}
+	}
+	if strings.Contains(snap.Text, "unrelated prose") {
+		t.Error("snapshot included an unnamed file's text")
+	}
+}
+
+func TestNamedCode(t *testing.T) {
+	isFile := func(s string) bool { return s == "docs/api.rst" }
+	files, names := NamedCode("Add `argsort(iterable, *, key=None)` to `more_itertools`, next to `mi.argmin` in `docs/api.rst`; run `go test ./...` and render `# Title #`.", isFile)
+	if !slices.Equal(files, []string{"docs/api.rst"}) || !slices.Equal(names, []string{"argsort", "more_itertools", "argmin"}) {
+		t.Fatalf("files %v, names %v", files, names)
 	}
 }
 

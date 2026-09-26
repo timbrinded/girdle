@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -112,6 +113,14 @@ func (t toolset) edit(_ context.Context, in editInput, _ fantasy.ToolCall) (fant
 	case in.OldText == "":
 		return fantasy.NewTextErrorResponse("old_text is empty"), nil
 	case n == 0:
+		// Models often get indentation wrong, tabs for spaces or the
+		// reverse. A unique match with whitespace ignored is safe to use.
+		if out, ok := replaceIgnoringWhitespace(s, in.OldText, in.NewText); ok {
+			if err := os.WriteFile(p, []byte(out), 0o644); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			return fantasy.NewTextResponse(fmt.Sprintf("replaced 1 occurrence(s) in %s (old_text matched with whitespace ignored; indentation kept from the file)", in.Path)), nil
+		}
 		return fantasy.NewTextErrorResponse("old_text not found in " + in.Path), nil
 	case n > 1 && !in.ReplaceAll:
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("old_text matches %d times in %s; add surrounding lines to make it unique or set replace_all", n, in.Path)), nil
@@ -198,4 +207,68 @@ func clip(s string) string {
 		tail++
 	}
 	return s[:head] + fmt.Sprintf("\n[... %d bytes omitted ...]\n", tail-head) + s[tail:]
+}
+
+// replaceIgnoringWhitespace replaces old with new in content, matching whole
+// lines with leading and trailing whitespace ignored. It succeeds only when
+// exactly one run of lines matches. The new lines are re-indented the way
+// the matched lines differ from old: the same prefix mapping, and runs of
+// spaces turned into tabs when the file indents with tabs.
+func replaceIgnoringWhitespace(content, old, new string) (string, bool) {
+	oldLines := strings.Split(strings.Trim(old, "\n"), "\n")
+	fileLines := strings.Split(content, "\n")
+	if len(oldLines) == 0 || strings.TrimSpace(old) == "" {
+		return "", false
+	}
+	match := -1
+	for i := 0; i+len(oldLines) <= len(fileLines); i++ {
+		same := true
+		for j, ol := range oldLines {
+			if strings.TrimSpace(fileLines[i+j]) != strings.TrimSpace(ol) {
+				same = false
+				break
+			}
+		}
+		if same {
+			if match >= 0 {
+				return "", false // ambiguous
+			}
+			match = i
+		}
+	}
+	if match < 0 {
+		return "", false
+	}
+
+	indents := map[string]string{}
+	spacesPerTab := 0
+	for j, ol := range oldLines {
+		if strings.TrimSpace(ol) == "" {
+			continue
+		}
+		from, to := leading(ol), leading(fileLines[match+j])
+		indents[from] = to
+		if from != "" && strings.Trim(from, " ") == "" && to != "" && strings.Trim(to, "\t") == "" && len(from)%len(to) == 0 {
+			spacesPerTab = len(from) / len(to)
+		}
+	}
+	newLines := strings.Split(strings.Trim(new, "\n"), "\n")
+	if strings.Trim(new, "\n") == "" {
+		newLines = nil
+	}
+	for k, nl := range newLines {
+		lead := leading(nl)
+		switch to, ok := indents[lead]; {
+		case ok:
+			newLines[k] = to + nl[len(lead):]
+		case spacesPerTab > 0 && lead != "" && strings.Trim(lead, " ") == "" && len(lead)%spacesPerTab == 0:
+			newLines[k] = strings.Repeat("\t", len(lead)/spacesPerTab) + nl[len(lead):]
+		}
+	}
+	out := slices.Concat(fileLines[:match], newLines, fileLines[match+len(oldLines):])
+	return strings.Join(out, "\n"), true
+}
+
+func leading(s string) string {
+	return s[:len(s)-len(strings.TrimLeft(s, " \t"))]
 }
