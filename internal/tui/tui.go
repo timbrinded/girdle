@@ -237,6 +237,19 @@ func toolArg(input string) string {
 	if paths, check, ok := tools.ParseApply(input); ok && len(paths) > 0 {
 		return firstLines(strings.Join(paths, ", ")+" · check: "+check, 1)
 	}
+	var lk tools.LookupInput
+	if json.Unmarshal([]byte(input), &lk) == nil && len(lk.Files)+len(lk.Definitions)+len(lk.Searches) > 0 {
+		var parts []string
+		for _, group := range []struct {
+			name  string
+			items []string
+		}{{"files", lk.Files}, {"definitions", lk.Definitions}, {"searches", lk.Searches}} {
+			if len(group.items) > 0 {
+				parts = append(parts, group.name+" "+strings.Join(group.items, ", "))
+			}
+		}
+		return firstLines(strings.Join(parts, " · "), 1)
+	}
 	var args map[string]any
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return firstLines(input, 1)

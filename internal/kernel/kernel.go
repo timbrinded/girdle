@@ -533,12 +533,16 @@ When you finish, reply briefly with what you changed and the evidence that it wo
 	if cfg.Snapshot {
 		b.WriteString(`
 
-Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't list the directory or read those files again. For a large one it lists every file, includes the repository's instructions for agents, and already shows the definitions, uses and neighbouring tests of the code the request names, so don't look those up again. Find anything else with search and definition, and ask for several things in one response when you can.`)
+Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't read those files again. For a large one it lists every file, includes the repository's instructions for agents, and already shows the code the request names: its files or definitions, its uses and the tests beside it. Don't look those up again.`)
 	}
 	if cfg.Batch {
 		b.WriteString(`
 
-Every response you send costs the user several seconds, so finish in as few as you can. Make changes with the apply tool: put every edit and new file the task needs into one apply call, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. apply runs the check straight after the changes, so a single response both changes and verifies the code. The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". If the check fails, send one more apply with the fixes. Keep any text to a sentence.
+Every response you send costs the user several seconds, so finish in as few as you can. Work in at most three moves: gather, change, and only if needed fix.
+- Gather: if the snapshot isn't enough, make one lookup call with every file, line range, definition and search you will need. Ask generously rather than coming back for more.
+- Change: make one apply call with every edit and new file the task needs, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. When the task reports a bug, put a test that reproduces it in the same apply as the fix, so the check shows it fixed. apply runs the check straight after the changes, so one response both changes and verifies the code.
+- Fix: if the check fails, send one more apply with the fixes.
+The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". Keep any text to a sentence.
 
 Writing takes time too, so write as little as the task allows. Change existing files with old_text and new_text edits, each old_text short but unique; use content only for new files or files you are mostly rewriting. Changes apply in order, so never let two changes touch the same lines: merge them into one. Keep new tests compact: one focused test per behaviour.`)
 	}

@@ -31,6 +31,9 @@ const (
 	// 16k tokens.
 	DefaultSnapshotBudget = 64 << 10
 	maxListed             = 400
+	// wholeFileMax is the largest file holding named code that a snapshot
+	// shows whole rather than as just the definition.
+	wholeFileMax = 16 << 10
 )
 
 // skipDirs are never worth sending when the directory isn't a git repo:
@@ -203,7 +206,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		case len(data) <= budget/4 && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", f, strings.TrimRight(string(data), "\n"))):
 			snap.Included++
 		default:
-			add(fmt.Sprintf("<file path=%q>%s, %d lines: too large to include; use search, definition or read with an offset</file>\n", f, size(len(data)), bytes.Count(data, []byte{'\n'})+1))
+			add(fmt.Sprintf("<file path=%q>%s, %d lines: too large to include; look up the parts you need</file>\n", f, size(len(data)), bytes.Count(data, []byte{'\n'})+1))
 		}
 	}
 
@@ -212,29 +215,48 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 	// code's definitions and uses, and last the tests beside that code.
 	files, names := NamedCode(request, func(s string) bool { return slices.Contains(paths, s) })
 	files = slices.Concat(agentFiles(paths), files)
+	shown := slices.Clone(files)
 	for _, f := range files {
 		addFile(f)
 	}
 	var tests []string
 	for _, name := range names {
-		for _, d := range tools.FindDefinitions(ctx, dir, name) {
-			add(fmt.Sprintf("<definition name=%q>\n%s\n</definition>\n", name, d.String()))
+		defs := tools.FindDefinitions(ctx, dir, name)
+		for _, d := range defs {
+			// A small file holding the named code is worth showing whole:
+			// the model reads it first anyway.
+			if !slices.Contains(shown, d.Path) {
+				data, err := os.ReadFile(filepath.Join(dir, d.Path))
+				if err == nil && len(data) <= wholeFileMax && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", d.Path, strings.TrimRight(string(data), "\n"))) {
+					snap.Included++
+					shown = append(shown, d.Path)
+				} else {
+					add(fmt.Sprintf("<definition name=%q>\n%s\n</definition>\n", name, d.String()))
+				}
+			}
 			for _, t := range siblingTests(d.Path, paths) {
-				if !slices.Contains(tests, t) && !slices.Contains(files, t) {
+				if !slices.Contains(tests, t) && !slices.Contains(shown, t) {
 					tests = append(tests, t)
 				}
 			}
+		}
+		// Uses of a plain lowercase word the repository doesn't define
+		// ("del", "util") are noise; a code-shaped name that doesn't
+		// exist yet is worth reporting as new.
+		if len(defs) == 0 && strings.ToLower(name) == name {
+			continue
 		}
 		if uses, err := tools.Search(ctx, dir, `\b`+name+`\b`, "", "", false); err == nil {
 			add(fmt.Sprintf("<uses name=%q>\n%s\n</uses>\n", name, clipLines(uses, 40)))
 		}
 	}
 	for _, t := range tests {
+		shown = append(shown, t)
 		addFile(t)
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "<repository_snapshot>\nTaken just before this message. The repository is too large to include in full (%d files, %s), so this lists every file and shows the code the request names. Find anything else with search and definition.\n\n", len(paths), size(total))
+	fmt.Fprintf(&b, "<repository_snapshot>\nTaken just before this message. The repository is too large to include in full (%d files, %s), so this lists every file and shows the code the request names. Look up anything else you need.\n\n", len(paths), size(total))
 	b.WriteString(list.String())
 	if named.Len() > 0 {
 		b.WriteString("\n" + named.String())

@@ -10,18 +10,17 @@ import (
 	"charm.land/fantasy"
 )
 
-// Batched returns the tools for the fast flow: read, search, definition,
-// apply and bash. apply takes every change plus the command that checks
-// them, so one LLM step can both change and verify the code, and search and
-// definition find code in one step. Each LLM step costs seconds of latency,
-// so fewer, larger steps finish sooner.
+// Batched returns the tools for the fast flow: lookup, apply and bash.
+// Each LLM step costs seconds of latency, so both working tools take lists:
+// lookup fetches every file, definition and search the model needs in one
+// call, and apply makes every change and runs the check that verifies them.
 func Batched(dir string) []fantasy.AgentTool {
 	t := toolset{dir: dir}
-	return append([]fantasy.AgentTool{
-		fantasy.NewAgentTool("read", "Read a text file. Returns up to 2000 lines starting at offset (1-based).", t.read),
+	return []fantasy.AgentTool{
+		fantasy.NewAgentTool("lookup", LookupDescription, t.lookup),
 		fantasy.NewAgentTool("apply", ApplyDescription, t.apply),
-		fantasy.NewAgentTool("bash", "Run a shell command in the working directory and return its combined output and exit code.", t.bash),
-	}, CodeTools(dir)...)
+		fantasy.NewAgentTool("bash", "Run a shell command in the working directory and return its combined output and exit code. Use lookup, not bash, to read or search files.", t.bash),
+	}
 }
 
 // ApplyDescription is the apply tool's description, shared by every tool that

@@ -238,8 +238,8 @@ func extractBody(lines []string, start int, ext string) (src string, first int, 
 		}
 		end = min(end, len(lines)-1)
 	}
-	// Include comments and decorators directly above.
-	for start > 0 {
+	// Include comments and decorators directly above, up to a point.
+	for top := start; start > 0 && top-start < 30; {
 		prev := strings.TrimSpace(lines[start-1])
 		if strings.HasPrefix(prev, "//") || strings.HasPrefix(prev, "@") || strings.HasPrefix(prev, "#") {
 			start--

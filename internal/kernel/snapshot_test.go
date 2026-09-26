@@ -62,11 +62,13 @@ func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
 		"config.yml":    "a: 1\n",
 		"AGENTS.md":     "Run tests with make test.\n",
 		"price_test.go": "package shop\n\nfunc TestPrice(t *testing.T) {}\n",
+		"big/parse.go":  "package big\n\n" + strings.Repeat("// filler\n", 2000) + "func parseAll() int {\n\treturn 1\n}\n",
 	})
-	snap := TakeSnapshot(t.Context(), dir, 2000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal` and update `config.yml`.")
+	snap := TakeSnapshot(t.Context(), dir, 4000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal`, update `config.yml`, and fix `parseAll`.")
 	for _, want := range []string{
 		"too large to include in full", "- notes.md", "- price.go",
-		`<definition name="computeTotal">`, "price.go:3-6", "func computeTotal(qty, unit int) int {",
+		`<file path="price.go">`, "func computeTotal(qty, unit int) int {",
+		`<definition name="parseAll">`, "big/parse.go:1973-2005", "func parseAll() int {",
 		`<uses name="computeTotal">`, "cart.go:3:", `<file path="config.yml">`, `<uses name="sumTotal">`,
 		`<file path="AGENTS.md">`, "Run tests with make test.", `<file path="price_test.go">`, "func TestPrice",
 	} {
@@ -76,6 +78,9 @@ func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
 	}
 	if strings.Contains(snap.Text, "unrelated prose") {
 		t.Error("snapshot included an unnamed file's text")
+	}
+	if n := strings.Count(snap.Text, "// filler"); n > 30 {
+		t.Errorf("definition carried %d comment lines, want at most 30", n)
 	}
 }
 
@@ -118,10 +123,10 @@ func TestNoteResultAndEarlySummary(t *testing.T) {
 func TestSystemPromptSections(t *testing.T) {
 	plain := systemPrompt(Config{Dir: "/r"})
 	fast := systemPrompt(Config{Dir: "/r", Snapshot: true, Batch: true})
-	if strings.Contains(plain, "snapshot") || strings.Contains(plain, "single response") {
+	if strings.Contains(plain, "snapshot") || strings.Contains(plain, "one apply call") {
 		t.Fatal("plain prompt mentions fast-flow instructions")
 	}
-	if !strings.Contains(fast, "repository snapshot") || !strings.Contains(fast, "single response") {
+	if !strings.Contains(fast, "repository snapshot") || !strings.Contains(fast, "one apply call") || !strings.Contains(fast, "one lookup call") {
 		t.Fatal("fast prompt is missing its instructions")
 	}
 }

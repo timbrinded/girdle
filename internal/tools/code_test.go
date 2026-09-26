@@ -130,3 +130,56 @@ func TestApplyWithOnlyACheck(t *testing.T) {
 		t.Fatalf("exit code %d %v", code, ok)
 	}
 }
+
+func TestLookup(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"a.go":  "package a\n\n// Sum adds.\nfunc Sum(x, y int) int {\n\treturn x + y\n}\n",
+		"b.txt": "one\ntwo\nthree\nfour\n",
+	})
+	var lookup fantasy.AgentTool
+	for _, tool := range Batched(dir) {
+		if tool.Info().Name == "lookup" {
+			lookup = tool
+		}
+	}
+	res, err := lookup.Run(t.Context(), fantasy.ToolCall{ID: "1", Name: "lookup",
+		Input: `{"files":["b.txt:2-3","missing.txt"],"definitions":["Sum","Nope"],"searches":["x \\+ y"]}`})
+	if err != nil || res.IsError {
+		t.Fatalf("lookup: %+v %v", res, err)
+	}
+	for _, want := range []string{
+		"=== file b.txt:2-3\ntwo\nthree", "=== file missing.txt (error)",
+		"=== definition Sum\na.go:3-6", "=== definition Nope\nnot found", "=== search x \\+ y\na.go:5:",
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("lookup output is missing %q:\n%s", want, res.Content)
+		}
+	}
+	if strings.Contains(res.Content, "four") {
+		t.Error("line range read too far")
+	}
+	res, _ = lookup.Run(t.Context(), fantasy.ToolCall{ID: "2", Name: "lookup", Input: `{}`})
+	if !res.IsError {
+		t.Fatal("an empty lookup should be an error")
+	}
+}
+
+func TestParseRange(t *testing.T) {
+	cases := []struct {
+		in          string
+		path        string
+		offset, lim int
+	}{
+		{"a.go", "a.go", 0, 0},
+		{"a.go:10-20", "a.go", 10, 11},
+		{"a.go:10", "a.go", 10, 0},
+		{"a.go:20-10", "a.go", 20, 0},
+		{`C:\x.go`, `C:\x.go`, 0, 0},
+	}
+	for _, c := range cases {
+		p, o, l := parseRange(c.in)
+		if p != c.path || o != c.offset || l != c.lim {
+			t.Errorf("parseRange(%q) = %q, %d, %d", c.in, p, o, l)
+		}
+	}
+}
