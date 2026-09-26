@@ -43,7 +43,17 @@ type StepPolicy struct {
 	// Coverage is the noul threshold below which a requirement counts as
 	// not done.
 	Coverage float64
+	// Fanout asks the broad question set about the request's changes and
+	// the latest check instead. It stops when P(done_verified) reaches
+	// Verified and Jev reads the check as exercising the task at Exercises
+	// or more. The state must carry the changes and the check's output.
+	Fanout    bool
+	Verified  float64
+	Exercises float64
 }
+
+// FanoutStepPolicy is the step-end fan-out's policy (decision 0013).
+var FanoutStepPolicy = StepPolicy{Fanout: true, Verified: 0.34, Exercises: 0.7}
 
 // DefaultStepPolicy stops early from a "complete" noul of 0.7. In the
 // 2026-09-26 decision logs every early stop from 0.80 to 0.85 passed its
@@ -74,13 +84,21 @@ func (p StepPolicy) Decide(a map[string]jev.Answer, requirements []string) (Acti
 func StepEnd(ctx context.Context, c *jev.Client, s TurnState, p StepPolicy) Decision {
 	d := Decision{Checkpoint: "step_end", State: s}
 	start := time.Now()
-	res, err := c.Ask(ctx, s, StepEndQuestions(s.Requirements))
+	qs := StepEndQuestions(s.Requirements)
+	if p.Fanout {
+		qs = StepFanQuestions(s.Requirements)
+	}
+	res, err := c.Ask(ctx, s, qs)
 	d.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		d.Action, d.Rule, d.Error = Continue, "jev_unavailable", err.Error()
 		return d
 	}
 	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Action, d.Rule = p.Decide(res.Answers, s.Requirements)
+	if p.Fanout {
+		d.Action, d.Rule = p.decideFan(res.Answers)
+	} else {
+		d.Action, d.Rule = p.Decide(res.Answers, s.Requirements)
+	}
 	return d
 }

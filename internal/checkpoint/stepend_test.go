@@ -50,3 +50,19 @@ func TestStepEndQuestions(t *testing.T) {
 		t.Fatal("StepEndQuestions changed the shared base set")
 	}
 }
+
+func TestFanoutPolicyReadsVerifiedProbability(t *testing.T) {
+	p := FanoutStepPolicy
+	for _, tc := range []struct {
+		verified, exercises float64
+		want                Action
+	}{{0.5, 0.9, Stop}, {0.34, 0.7, Stop}, {0.2, 0.9, Continue}, {0.9, 0.39, Continue}} {
+		a := map[string]jev.Answer{
+			"status":          {Type: "choice", Choice: "done_unverified", Probabilities: map[string]float64{"done_verified": tc.verified}},
+			"check_exercises": {Type: "noul", Noul: tc.exercises},
+		}
+		if got, _ := p.decideFan(a); got != tc.want {
+			t.Errorf("P(done_verified)=%.2f, exercises %.2f: %s, want %s", tc.verified, tc.exercises, got, tc.want)
+		}
+	}
+}

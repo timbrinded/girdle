@@ -32,6 +32,15 @@ type TurnState struct {
 	Requirements         []string `json:"requirements,omitempty"`
 	LastAssistantMessage string   `json:"last_assistant_message"`
 	RecentSteps          []string `json:"recent_steps"`
+
+	// Set only for the step-end fan-out: the request's changes themselves
+	// and the latest check, so Jev judges the work rather than a one-line
+	// summary of it.
+	Changes      []string `json:"changes,omitempty"`
+	FilesChanged []string `json:"files_changed,omitempty"`
+	TestsChanged []string `json:"tests_changed,omitempty"`
+	Check        string   `json:"check,omitempty"`
+	CheckOutput  string   `json:"check_output,omitempty"`
 }
 
 // Decision records one checkpoint evaluation for the event log.

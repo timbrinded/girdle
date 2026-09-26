@@ -82,7 +82,15 @@ func fakeJev(t *testing.T, overrides ...map[string]float64) *jev.Client {
 				time.Sleep(100 * time.Millisecond)
 				answers[k] = jev.Answer{Type: "score", Score: 1.0}
 			case "status":
-				answers[k] = jev.Answer{Type: "choice", Choice: "done", Confidence: 0.95}
+				// The turn-end reads the choice; the step-end fan-out reads
+				// P(done_verified), which a test can set.
+				verified := 0.9
+				if len(overrides) > 0 {
+					if v, ok := overrides[0]["done_verified"]; ok {
+						verified = v
+					}
+				}
+				answers[k] = jev.Answer{Type: "choice", Choice: "done", Confidence: 0.95, Probabilities: map[string]float64{"done_verified": verified}}
 			case "needless_ask", "tests", "test_at_fault":
 				answers[k] = jev.Answer{Type: "noul", Noul: 0}
 			default:

@@ -139,19 +139,31 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	return fantasy.NewTextResponse(b.String()), nil
 }
 
-// ParseApply reads the files an apply call changes and its check command,
-// without the file contents.
-func ParseApply(input string) (paths []string, check string, ok bool) {
+// ParseApplyInput decodes an apply call's input.
+func ParseApplyInput(input string) (ApplyInput, bool) {
 	var in ApplyInput
-	if json.Unmarshal([]byte(input), &in) != nil {
-		return nil, "", false
-	}
+	return in, json.Unmarshal([]byte(input), &in) == nil
+}
+
+// Paths lists the files the changes touch, once each, in order.
+func (in ApplyInput) Paths() []string {
+	var paths []string
 	for _, c := range in.Changes {
 		if !slices.Contains(paths, c.Path) {
 			paths = append(paths, c.Path)
 		}
 	}
-	return paths, in.Check, true
+	return paths
+}
+
+// ParseApply reads the files an apply call changes and its check command,
+// without the file contents.
+func ParseApply(input string) (paths []string, check string, ok bool) {
+	in, ok := ParseApplyInput(input)
+	if !ok {
+		return nil, "", false
+	}
+	return in.Paths(), in.Check, true
 }
 
 // RunCheck runs a check command in dir the way apply does, with pipefail,

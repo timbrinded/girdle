@@ -1,6 +1,6 @@
 # Optimisation stage summary: where the fast flow stands
 
-26 September 2026. Branch `feat/scale-bench`. Decisions 0005 to 0012.
+26 to 27 September 2026. Branch `feat/scale-bench`. Decisions 0005 to 0013.
 
 ## Headline
 
@@ -15,10 +15,10 @@ Cold, with a fresh copy every run, the gap is 1.24× on real repositories and 2.
 
 ## What the fast flow does
 
-1. **Snapshot.** The request carries the repository. Small repositories go whole. Large ones get the file list, their agent instructions, and the definitions, uses and neighbouring tests of the code the request names.
+1. **Snapshot.** The request carries the repository. Small repositories go whole. Large ones get the file list, their agent instructions, and the definitions, uses and neighbouring tests of the code the request names. Jev then judges every other small file, one isolated question each, and the likeliest go too (0013).
 2. **One lookup.** Fetches every file, definition and search the model needs in one call.
 3. **One apply.** Makes every change and runs a check that proves the task. A bug fix carries a regression test, and `reproduce` shows that test fails without the fix.
-4. **Early stop.** Jev reads the check's result and ends the run when the task is done, with a guard that tests the task asked for have been written.
+4. **Early stop.** Jev reads the changes and the check's output with 59 questions in one request. It ends the run when the work reads as done and verified by a check that exercises the task, with a guard that tests the task asked for have been written (0013).
 5. **Cross-check.** An independent test, written from the task's words in parallel, runs before Jev is asked. Jev screens out cross-checks that fail through their own fault.
 6. **Racing and speculation.**
    - The first call races three copies.
@@ -44,6 +44,8 @@ Compaction of stale output is shelved: it is built, but off in `-fast` until a s
 | FFF (indexed search) | Search is under 0.1% of run time at these sizes; revisit for monorepos |
 | Warm the build cache, reorder the prompt for caching | Mainly benchmark artefacts; warm mode measures real use instead |
 | Reasoning summaries into Jev | No change in 20 replayed decisions; the misses are blind spots |
+| One Jev question per spec rule | Worse than chance at catching false "done"s: Jev can't run code in its head (0013) |
+| Jev judging whether tests or code are at fault | Accurate, at 0.97 AUC, but the agent already fixes the right side (0013) |
 
 ## What would move it next
 

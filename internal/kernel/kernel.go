@@ -62,6 +62,9 @@ type Config struct {
 	// doesn't spend steps listing and reading them.
 	Snapshot       bool
 	SnapshotBudget int
+	// Prefetch asks Jev, for a repository too large to snapshot whole,
+	// which other files the request needs, and adds them. It needs Snapshot.
+	Prefetch bool
 	// Batch asks the LLM to make all its edits and run the checks in one
 	// step, since every extra step costs seconds of latency.
 	Batch bool
@@ -137,6 +140,10 @@ type Session struct {
 	testsEdited bool
 	// testsAsked is Jev's noul for "the request asks for tests".
 	testsAsked float64
+	// changeLog holds this request's changes, and lastOut the latest
+	// check's output, for the step-end fan-out.
+	changeLog []string
+	lastOut   string
 }
 
 // NewSession builds a session with the four built-in tools.
@@ -170,6 +177,8 @@ func NewSession(cfg Config) *Session {
 		"crosscheck":  fmt.Sprint(cfg.CrossCheck),
 		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
 		"compact":     fmt.Sprint(cfg.Compact),
+		"prefetch":    fmt.Sprint(cfg.Prefetch),
+		"stepfan":     fmt.Sprint(cfg.StepPolicy.Fanout),
 		"reproduce":   fmt.Sprint(cfg.Reproduce),
 	}})
 	return s
@@ -215,8 +224,16 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	var snap Snapshot
 	var wg sync.WaitGroup
 	if s.cfg.Snapshot {
+		var pick Picker
+		if s.cfg.Prefetch && s.cfg.Jev != nil {
+			pick = func(ctx context.Context, request string, files []checkpoint.FileOutline) checkpoint.Prefetch {
+				ctx, cancel := context.WithTimeout(ctx, prefetchWait)
+				defer cancel()
+				return checkpoint.NeedToRead(ctx, s.cfg.Jev, request, files, prefetchWorkers)
+			}
+		}
 		wg.Go(func() {
-			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt)
+			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
@@ -231,9 +248,17 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	wg.Wait()
 	msg := prompt
 	if s.cfg.Snapshot {
-		s.emit(Event{Type: EventSnapshot, Meta: map[string]string{
+		meta := map[string]string{
 			"files": fmt.Sprint(snap.Files), "included": fmt.Sprint(snap.Included), "bytes": fmt.Sprint(snap.Bytes),
-		}})
+		}
+		if snap.Candidates > 0 {
+			s.addUsage(Usage{JevTokens: snap.Prefetch.InputTokens})
+			meta["prefetched"] = strings.Join(snap.Prefetched, ",")
+			meta["candidates"] = fmt.Sprint(snap.Candidates)
+			meta["scored"] = fmt.Sprint(len(snap.Prefetch.Scores))
+			meta["prefetch_ms"] = fmt.Sprint(snap.Prefetch.LatencyMS)
+		}
+		s.emit(Event{Type: EventSnapshot, Meta: meta})
 		msg = snap.Text + "\n\n" + prompt
 	}
 	s.history = append(s.history, fantasy.NewUserMessage(msg))
@@ -254,6 +279,7 @@ func (s *Session) Resume(ctx context.Context, task string) (Outcome, string) {
 func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
 	s.testsEdited, s.testsAsked = false, 0
+	s.changeLog, s.lastOut = nil, ""
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
 }
@@ -471,13 +497,21 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 		code, ok := tools.ExitCode(text)
 		s.lastOK = !s.cfg.Batch && ok && code == 0 && !isErr
 		s.lastCmd = inputField(call.Input, "command")
+		s.lastOut = text
 	case "apply":
 		// An apply that failed may have applied some changes, but its check
 		// did not run, so it is never evidence of success.
 		s.lastOK = false
-		paths, check, ok := tools.ParseApply(call.Input)
+		in, ok := tools.ParseApplyInput(call.Input)
 		if !ok || isErr {
 			return
+		}
+		paths, check := in.Paths(), in.Check
+		for _, c := range in.Changes {
+			s.changeLog = append(s.changeLog, renderChange(c))
+		}
+		if check != "" {
+			s.lastOut = text
 		}
 		for _, p := range paths {
 			s.edited[p] = true
@@ -562,12 +596,23 @@ func (s *Session) stepEnd(ctx context.Context, task string, requirements []strin
 	if s.testsAsked >= 0.5 && !s.testsEdited {
 		return false
 	}
-	d := checkpoint.StepEnd(ctx, s.cfg.Jev, checkpoint.TurnState{
+	state := checkpoint.TurnState{
 		Task:                 task,
 		Requirements:         requirements,
 		LastAssistantMessage: clipMiddle(text, 2000),
 		RecentSteps:          lastN(s.steps, 12),
-	}, s.cfg.StepPolicy)
+	}
+	if s.cfg.StepPolicy.Fanout {
+		state.Changes = lastN(s.changeLog, 12)
+		state.FilesChanged = slices.Sorted(maps.Keys(s.edited))
+		for _, p := range state.FilesChanged {
+			if tools.IsTestFile(p) {
+				state.TestsChanged = append(state.TestsChanged, p)
+			}
+		}
+		state.Check, state.CheckOutput = s.lastCmd, clipMiddle(s.lastOut, 3500)
+	}
+	d := checkpoint.StepEnd(ctx, s.cfg.Jev, state, s.cfg.StepPolicy)
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	s.emit(Event{Type: EventDecision, Decision: &d})
 	return d.Action == checkpoint.Stop
@@ -753,4 +798,20 @@ func clipKeeping(s string, n, head int) string {
 		tail++
 	}
 	return s[:head] + " … " + s[tail:]
+}
+
+const (
+	// prefetchWait bounds the prefetch, which holds up the first LLM call,
+	// and prefetchWorkers is how many of its Jev requests run at once.
+	prefetchWait    = 4 * time.Second
+	prefetchWorkers = 32
+)
+
+// renderChange shows one change the way a diff would, clipped.
+func renderChange(c tools.Change) string {
+	if c.OldText != "" {
+		return "edit " + c.Path + "\n- " + strings.ReplaceAll(clipMiddle(c.OldText, 600), "\n", "\n- ") +
+			"\n+ " + strings.ReplaceAll(clipMiddle(c.NewText, 1500), "\n", "\n+ ")
+	}
+	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
 }

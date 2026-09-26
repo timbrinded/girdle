@@ -52,13 +52,15 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
-		fast        = flag.Bool("fast", false, "fast flow: -snapshot -batch -early-stop -speculate -crosscheck -reproduce -heartbeat, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
+		fast        = flag.Bool("fast", false, "fast flow: -snapshot -prefetch -batch -early-stop -stepfan -speculate -crosscheck -reproduce -heartbeat, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
 		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
 		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
 		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 1, or 3 with -fast)")
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
 		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed (shelved: not part of -fast)")
+		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
+		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
@@ -99,6 +101,10 @@ func run() int {
 	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && withFast("crosscheck", *crossCheck)
 	cfg.Reproduce = cfg.Batch && withFast("reproduce", *reproduce)
 	cfg.Heartbeat = !*noJev && withFast("heartbeat", *heartbeat)
+	cfg.Prefetch = cfg.Snapshot && !*noJev && withFast("prefetch", *prefetch)
+	if withFast("stepfan", *stepfan) {
+		cfg.StepPolicy = checkpoint.FanoutStepPolicy
+	}
 	cfg.Compact = !*noJev && *compact
 	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
