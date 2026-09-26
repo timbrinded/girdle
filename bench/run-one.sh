@@ -24,8 +24,15 @@ id=$task.$agent.$rep
 out=$outroot/$id
 mkdir -p "$out"
 
-work=$(mktemp -d)/repo
-"$root/bench/prepare.sh" "$tdir" "$work"
+# In warm mode (WARM_DIR, from run-warm.sh) the working directory is reused
+# and reset with git; otherwise each run gets a fresh copy.
+if [[ -n ${WARM_DIR:-} ]]; then
+  work=$WARM_DIR
+  (cd "$work" && git reset -q --hard && git clean -fdq)
+else
+  work=$(mktemp -d)/repo
+  "$root/bench/prepare.sh" "$tdir" "$work"
+fi
 prompt=$(cat "$tdir/task.md")
 
 # An agent name ending in an effort (-none, -minimal, -low) runs at that
@@ -46,6 +53,12 @@ if [[ $base =~ ^(.*)-r([0-9]+)$ ]]; then
   race=${BASH_REMATCH[2]}
 fi
 
+# -lean (last) leaves out compaction and reproduce.
+lean=
+if [[ $base == *-lean ]]; then
+  base=${base%-lean}
+  lean=1
+fi
 # -mix sends every call after a request's first, and the cross-check writer,
 # to a fast model; -oss sends every call there.
 fastargs=()
@@ -73,6 +86,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ -n $fixed_effort ]] && extra+=(--no-route)
   [[ -n $race ]] && extra+=(--race "$race")
   extra+=(${fastargs[@]+"${fastargs[@]}"})
+  [[ -n $lean ]] && extra+=(--lean)
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
     -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null
@@ -112,4 +126,8 @@ secs=$(($(date +%s) - start))
 check_exit=$?
 
 python3 "$root/bench/score_run.py" "$out" "$task" "$agent" "$rep" "$secs" "$agent_exit" "$check_exit"
-rm -rf "$(dirname "$work")"
+if [[ -n ${WARM_DIR:-} ]]; then
+  (cd "$work" && git reset -q --hard && git clean -fdq)
+else
+  rm -rf "$(dirname "$work")"
+fi

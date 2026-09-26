@@ -98,14 +98,25 @@ type Config struct {
 	// FastEffort, if set, is the effort for every fast-model call, in
 	// place of the routed one.
 	FastEffort checkpoint.Effort
+	// Compact prunes older tool output that Jev judges no longer needed,
+	// every CompactPolicy.Every steps. It needs Checkpoints.
+	Compact       bool
+	CompactPolicy checkpoint.CompactPolicy
+	// Reproduce lets apply check that a bug fix's regression test fails
+	// without the fix. It needs Batch.
+	Reproduce bool
 }
 
 // Session is one conversation in one working directory.
 type Session struct {
-	ID      string
-	cfg     Config
-	model   sessionModel // cfg.Model and cfg.FastModel, raced if cfg.Race asks for it
-	tools   []fantasy.AgentTool
+	ID    string
+	cfg   Config
+	model sessionModel // cfg.Model and cfg.FastModel, raced if cfg.Race asks for it
+	tools []fantasy.AgentTool
+	// resetTools tells the tools a new request has started.
+	resetTools func()
+	// pruned holds the tool calls whose output compaction replaced.
+	pruned  map[string]bool
 	agent   fantasy.Agent
 	history []fantasy.Message
 	steps   []string
@@ -151,7 +162,7 @@ func NewSession(cfg Config) *Session {
 	}
 	s := &Session{ID: uuid.New().String(), cfg: cfg, tools: tools.All(cfg.Dir), edited: map[string]bool{}}
 	if cfg.Batch {
-		s.tools = tools.Batched(cfg.Dir)
+		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce)
 	}
 	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace(false)), s: s}
 	if cfg.FastModel != nil {
@@ -179,6 +190,8 @@ func NewSession(cfg Config) *Session {
 		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
 		"fast_model":  cfg.FastModelName,
 		"fast_all":    fmt.Sprint(cfg.FastAll),
+		"compact":     fmt.Sprint(cfg.Compact),
+		"reproduce":   fmt.Sprint(cfg.Reproduce),
 	}})
 	return s
 }
@@ -226,6 +239,9 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	s.emit(Event{Type: EventUserMessage, Text: prompt})
 	s.task = prompt
 	s.resetFacts()
+	if s.resetTools != nil {
+		s.resetTools()
+	}
 	s.called.Store(false)
 	s.calls.Store(0)
 	// Routing waits on Jev and the snapshot on the disk: do both at once.
@@ -272,6 +288,7 @@ func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
 	s.testsEdited, s.testsAsked = false, 0
 	s.requestSteps, s.beats = 0, 0
+	s.pruned = map[string]bool{}
 }
 
 // route asks Jev how hard the request is and sets this run's reasoning effort.
@@ -398,10 +415,15 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			firstToken = time.Now()
 		}
 	}
+	var prepare fantasy.PrepareStepFunction
+	if s.cfg.Compact && s.cfg.Checkpoints && s.cfg.Jev != nil {
+		prepare = s.compactPrepare(task)
+	}
 	res, err := s.agent.Stream(ctx, fantasy.AgentStreamCall{
 		Messages:        s.history,
 		ProviderOptions: s.callOptions,
 		StopWhen:        stopWhen,
+		PrepareStep:     prepare,
 		OnStepStart: func(int) error {
 			stepStart, firstToken = time.Now(), time.Time{}
 			return nil
@@ -686,7 +708,11 @@ Each request starts with a repository snapshot, taken just before the request. F
 
 Every response you send costs the user several seconds, so finish in as few as you can. Work in at most three moves: gather, change, and only if needed fix.
 - Gather: if the snapshot isn't enough, make one lookup call with every file, line range, definition and search you will need. Ask generously rather than coming back for more.
-- Change: make one apply call with every edit and new file the task needs, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. When the task reports a bug, put a test that reproduces it in the same apply as the fix, so the check shows it fixed. Before you write, work out the edge cases the task's words imply, such as empty input, a one-pass iterator wherever it says iterable, equal items, and the smallest and largest sizes, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
+- Change: make one apply call with every edit and new file the task needs, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. When the task reports a bug, put a test that reproduces it in the same apply as the fix, so the check shows it fixed.`)
+		if cfg.Reproduce {
+			b.WriteString(` Set reproduce to a command that runs only that test: Girdle runs it once without your fix to show it fails there.`)
+		}
+		b.WriteString(` Before you write, work out the edge cases the task's words imply, such as empty input, a one-pass iterator wherever it says iterable, equal items, and the smallest and largest sizes, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
 - Fix: if the check fails, send one more apply with the fixes. Start its check with a quick run of just what failed, joined to the full proof with &&, so a repeat failure shows in seconds.
 The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". Keep any text to a sentence.
 

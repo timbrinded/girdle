@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Runs the benchmark: every task × agent × rep, in parallel, then summarises.
 #
-#   bench/bench.sh [-a "girdle pi"] [-s scale] [-t "go-rename py-config"] [-r 3] [-j 4] [-o outdir]
+#   bench/bench.sh [-a "girdle pi"] [-s scale] [-t "go-rename py-config"] [-r 3] [-j 4] [-o outdir] [-w]
+#
+# -w runs warm: each agent works each task in one reused, warmed directory,
+# its reps one after another, as in daily use. Without it, every run starts
+# from a fresh copy with cold caches.
 #
 # -s picks the task suite: tasks (small fixtures, the default) or scale
 # (real open-source repositories, fetched at a pinned commit).
@@ -12,7 +16,8 @@ tasks=$(cd "$root/bench/tasks" && printf '%s ' */ | tr -d /)
 reps=3
 jobs=4
 outroot=$root/bench/results/$(date +%Y%m%d-%H%M%S)
-while getopts "a:s:t:r:j:o:" opt; do
+warm=
+while getopts "a:s:t:r:j:o:w" opt; do
   case $opt in
   a) agents=$OPTARG ;;
   s) tasks=$(cd "$root/bench/$OPTARG" && printf '%s ' */ | tr -d /) ;;
@@ -20,6 +25,7 @@ while getopts "a:s:t:r:j:o:" opt; do
   r) reps=$OPTARG ;;
   j) jobs=$OPTARG ;;
   o) outroot=$OPTARG ;;
+  w) warm=1 ;;
   *) exit 2 ;;
   esac
 done
@@ -37,12 +43,20 @@ mkdir -p "$outroot"
 outroot=$(cd "$outroot" && pwd)
 echo "results: $outroot"
 
-for rep in $(seq 1 "$reps"); do
+if [[ -n $warm ]]; then
   for task in $tasks; do
     for agent in $agents; do
-      echo "$agent $task $rep"
+      echo "$agent $task $reps"
     done
-  done
-done | xargs -P "$jobs" -L 1 bash -c '"'"$root"'/bench/run-one.sh" "$0" "$1" "$2" "'"$outroot"'"'
+  done | xargs -P "$jobs" -L 1 bash -c '"'"$root"'/bench/run-warm.sh" "$0" "$1" "$2" "'"$outroot"'"'
+else
+  for rep in $(seq 1 "$reps"); do
+    for task in $tasks; do
+      for agent in $agents; do
+        echo "$agent $task $rep"
+      done
+    done
+  done | xargs -P "$jobs" -L 1 bash -c '"'"$root"'/bench/run-one.sh" "$0" "$1" "$2" "'"$outroot"'"'
+fi
 
 python3 "$root/bench/summarize.py" "$outroot"

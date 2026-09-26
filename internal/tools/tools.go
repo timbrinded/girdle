@@ -41,7 +41,12 @@ func All(dir string) []fantasy.AgentTool {
 // Tool inputs mark optional fields with omitempty: Fantasy reads that tag,
 // not omitzero, when it decides which parameters the model must send.
 
-type toolset struct{ dir string }
+type toolset struct {
+	dir string
+	// orig, when set, remembers files' contents from before the current
+	// request changed them, for apply's reproduce.
+	orig *originals
+}
 
 func (t toolset) path(p string) string {
 	if filepath.IsAbs(p) {

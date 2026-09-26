@@ -28,6 +28,7 @@ const (
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
 	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, invalid, not ready or none written
 	EventHeartbeat     EventType = "heartbeat"  // Jev's view of whether the turn is progressing
+	EventCompact       EventType = "compact"    // older tool output pruned from the context
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"

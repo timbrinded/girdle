@@ -84,9 +84,13 @@ func fakeJev(t *testing.T, overrides ...map[string]float64) *jev.Client {
 				answers[k] = jev.Answer{Type: "score", Score: 1.0}
 			case "status":
 				answers[k] = jev.Answer{Type: "choice", Choice: "done", Confidence: 0.95}
-			case "needless_ask", "tests":
+			case "needless_ask", "tests", "test_at_fault":
 				answers[k] = jev.Answer{Type: "noul", Noul: 0}
 			default:
+				if strings.HasPrefix(k, "needed_") {
+					answers[k] = jev.Answer{Type: "noul", Noul: 0.1}
+					break
+				}
 				answers[k] = jev.Answer{Type: "noul", Noul: 0.95}
 			}
 		}
@@ -407,5 +411,75 @@ func TestFastModelFailureFallsBackToTheMainModel(t *testing.T) {
 	}
 	if fastCalls.Load() == 0 || mainCalls.Load() != fastCalls.Load() {
 		t.Fatalf("fast %d, main %d calls: every failed fast call should fall back once", fastCalls.Load(), mainCalls.Load())
+	}
+}
+
+// bigLookupModel looks up a large file on each of its first 12 steps, then
+// replies. It records whether any prompt carried a pruned stub.
+type bigLookupModel struct {
+	fantasy.LanguageModel
+	sawStub *atomic.Bool
+}
+
+func (m bigLookupModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	results := 0
+	for _, msg := range call.Prompt {
+		for _, part := range msg.Content {
+			if tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part); ok {
+				results++
+				if t, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](tr.Output); ok && t.Text == prunedStub {
+					m.sawStub.Store(true)
+				}
+			}
+		}
+	}
+	return func(yield func(fantasy.StreamPart) bool) {
+		if results >= 12 {
+			for _, p := range []fantasy.StreamPart{
+				{Type: fantasy.StreamPartTypeTextStart, ID: "t"},
+				{Type: fantasy.StreamPartTypeTextDelta, ID: "t", Delta: "Done looking."},
+				{Type: fantasy.StreamPartTypeTextEnd, ID: "t"},
+				{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop},
+			} {
+				if !yield(p) {
+					return
+				}
+			}
+			return
+		}
+		if yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: fmt.Sprint("c", results), ToolCallName: "lookup", ToolCallInput: `{"files":["big.txt"]}`}) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+		}
+	}, nil
+}
+
+func TestCompactionPrunesOldOutput(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), []byte(strings.Repeat("line of text\n", 400)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sawStub atomic.Bool
+	var mu sync.Mutex
+	var compactions []Event
+	s := NewSession(Config{
+		Model: bigLookupModel{sawStub: &sawStub}, ModelName: "big", Jev: fakeJev(t), Dir: dir,
+		Policy: checkpoint.DefaultPolicy, Checkpoints: true, Batch: true,
+		Compact: true, CompactPolicy: checkpoint.DefaultCompactPolicy,
+		Emit: func(e Event) {
+			if e.Type == EventCompact {
+				mu.Lock()
+				compactions = append(compactions, e)
+				mu.Unlock()
+			}
+		},
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	s.Run(ctx, "Read big.txt a lot.")
+	if len(compactions) == 0 || compactions[0].Meta["pruned"] == "0" {
+		t.Fatalf("compactions %v", compactions)
+	}
+	if !sawStub.Load() {
+		t.Fatal("no later prompt carried the pruned stub")
 	}
 }

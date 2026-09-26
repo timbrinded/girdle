@@ -62,6 +62,9 @@ func run() int {
 		fastProv    = flag.String("fast-provider", "groq,cerebras", "comma-separated OpenRouter providers to try, in order, for -fast-model")
 		fastAll     = flag.Bool("fast-all", false, "with -fast-model, use it for every LLM call")
 		fastEffort  = flag.String("fast-effort", "", "with -fast-model, the reasoning effort for its calls (default: the routed effort)")
+		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed")
+		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
+		lean        = flag.Bool("lean", false, "with -fast, leave out -compact and -reproduce")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
@@ -95,6 +98,9 @@ func run() int {
 	cfg.Speculate = cfg.Route && (*fast || *speculate)
 	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && (*fast || *crossCheck)
 	cfg.Heartbeat = !*noJev && (*fast || *heartbeat)
+	cfg.Compact = !*noJev && (*fast && !*lean || *compact)
+	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
+	cfg.Reproduce = cfg.Batch && (*fast && !*lean || *reproduce)
 	if *fastModel != "" {
 		if err := addFastModel(ctx, &cfg, *fastModel, *fastProv); err != nil {
 			return fail(err)

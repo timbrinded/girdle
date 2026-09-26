@@ -15,12 +15,25 @@ import (
 // lookup fetches every file, definition and search the model needs in one
 // call, and apply makes every change and runs the check that verifies them.
 func Batched(dir string) []fantasy.AgentTool {
+	ts, _ := BatchedWithReset(dir, true)
+	return ts
+}
+
+// BatchedWithReset returns the fast-flow tools and a function the kernel
+// calls at the start of each request, so apply's reproduce knows what the
+// request has changed.
+func BatchedWithReset(dir string, reproduce bool) ([]fantasy.AgentTool, func()) {
 	t := toolset{dir: dir}
+	reset := func() {}
+	if reproduce {
+		t.orig = &originals{files: map[string]*[]byte{}}
+		reset = t.orig.reset
+	}
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool("lookup", LookupDescription, t.lookup),
 		fantasy.NewAgentTool("apply", ApplyDescription, t.apply),
 		fantasy.NewAgentTool("bash", "Run a shell command in the working directory and return its combined output and exit code. Use lookup, not bash, to read or search files.", t.bash),
-	}
+	}, reset
 }
 
 // ApplyDescription is the apply tool's description, shared by every tool that
@@ -40,6 +53,8 @@ type Change struct {
 type ApplyInput struct {
 	Changes Changes `json:"changes" description:"Every edit and file write the task needs, applied in order. Leave it empty to only run the check."`
 	Check   string  `json:"check" description:"Shell command that proves the task is done: build and run the tests, plus quick checks for anything the tests can't show, for example grep that an old name is gone. Don't hide its exit code."`
+	// Reproduce is optional: see its description.
+	Reproduce string `json:"reproduce,omitempty" description:"For a bug fix: a command that runs only the test reproducing the bug. After a passing check, Girdle runs it once with your code changes undone, to show it fails without the fix."`
 }
 
 // Changes is the list of changes in an apply call. Models sometimes send it
@@ -68,6 +83,9 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	var b strings.Builder
 	failed := 0
 	for _, c := range in.Changes {
+		if t.orig != nil {
+			t.orig.remember(t.path(c.Path))
+		}
 		var res fantasy.ToolResponse
 		if c.OldText != "" {
 			res, _ = t.edit(ctx, editInput{Path: c.Path, OldText: c.OldText, NewText: c.NewText, ReplaceAll: c.ReplaceAll}, call)
@@ -96,6 +114,19 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	// pipefail, so that "go test | tail" still fails when the tests do.
 	res, _ := t.bash(ctx, bashInput{Command: "set -o pipefail\n" + in.Check}, call)
 	out := res.Content
+	if code, ok := ExitCode(out); ok && code == 0 && in.Reproduce != "" {
+		// The note goes before the exit-code line. A test that doesn't
+		// reproduce the bug turns the result into a failure, so it isn't
+		// taken as proof.
+		if note, weak := t.reproduce(ctx, in.Reproduce); note != "" {
+			if head, tail, found := strings.CutLast(out, "\n"+exitTrailer); found {
+				if weak {
+					tail = "1]"
+				}
+				out = head + "\n\n" + note + "\n" + exitTrailer + tail
+			}
+		}
+	}
 	if code, ok := ExitCode(out); ok && code != 0 {
 		if hints := Hints(ctx, t.dir, out); hints != "" {
 			// The hints go before the exit-code line, which stays last.
