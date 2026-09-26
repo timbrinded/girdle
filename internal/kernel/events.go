@@ -29,6 +29,7 @@ const (
 	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, invalid, not ready or none written
 	EventHeartbeat     EventType = "heartbeat"  // Jev's view of whether the turn is progressing
 	EventCompact       EventType = "compact"    // older tool output pruned from the context
+	EventReasoning     EventType = "reasoning"  // the LLM's reasoning summary for a step, logged only
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"

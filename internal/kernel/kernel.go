@@ -116,13 +116,15 @@ type Session struct {
 	// resetTools tells the tools a new request has started.
 	resetTools func()
 	// pruned holds the tool calls whose output compaction replaced.
-	pruned  map[string]bool
-	agent   fantasy.Agent
-	history []fantasy.Message
-	steps   []string
-	mu      sync.Mutex // guards usage while LLM calls run concurrently
-	emitMu  sync.Mutex // serialises emit
-	usage   Usage
+	pruned map[string]bool
+	// lastReasoning is the latest step's reasoning summary, if any.
+	lastReasoning string
+	agent         fantasy.Agent
+	history       []fantasy.Message
+	steps         []string
+	mu            sync.Mutex // guards usage while LLM calls run concurrently
+	emitMu        sync.Mutex // serialises emit
+	usage         Usage
 	// callOptions override the agent's provider options for this run.
 	callOptions fantasy.ProviderOptions
 	// routing delivers Jev's route while the first call runs on a guess.
@@ -466,6 +468,13 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			return nil
 		},
 		OnStepFinish: func(sr fantasy.StepResult) error {
+			// Muse Spark's reasoning is encrypted; what comes back is a short
+			// summary. It is logged for offline study of whether it would
+			// help Jev's checkpoints; nothing acts on it yet.
+			if r := strings.TrimSpace(sr.Content.ReasoningText()); r != "" {
+				s.lastReasoning = clipMiddle(r, 2000)
+				s.emit(Event{Type: EventReasoning, Text: s.lastReasoning})
+			}
 			if t := strings.TrimSpace(sr.Content.Text()); t != "" {
 				s.emit(Event{Type: EventAssistantText, Text: t})
 			}
