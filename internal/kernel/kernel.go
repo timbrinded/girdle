@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 	"uuid"
@@ -69,9 +70,13 @@ type Config struct {
 	// It needs Checkpoints.
 	EarlyStop  bool
 	StepPolicy checkpoint.StepPolicy
-	// Race sends each LLM call this many times at once and keeps the first
-	// complete answer. Below 2, calls are not raced.
-	Race int
+	// Race sends each LLM call this many times and keeps the first complete
+	// answer. Below 2, calls are not raced. The first call of a request
+	// starts every copy at once; later calls start an extra copy only after
+	// waiting Hedge for an answer, so quick steps cost one call. A zero
+	// Hedge starts every copy at once for every call.
+	Race  int
+	Hedge time.Duration
 	// Speculate starts a request's first LLM call on the usual effort while
 	// Jev routes it, instead of waiting for the route. It needs Route.
 	Speculate bool
@@ -93,6 +98,8 @@ type Session struct {
 	callOptions fantasy.ProviderOptions
 	// routing delivers Jev's route while the first call runs on a guess.
 	routing chan checkpoint.RouteDecision
+	// called is set once a request's first LLM call has started.
+	called atomic.Bool
 
 	// Facts about the current request, for the step-end checkpoint.
 	edited  map[string]bool // files changed by a successful edit or apply
@@ -109,7 +116,7 @@ func NewSession(cfg Config) *Session {
 	if cfg.Batch {
 		s.tools = tools.Batched(cfg.Dir)
 	}
-	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.noteRace), s: s}
+	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
 	s.agent = fantasy.NewAgent(
 		s.model,
 		fantasy.WithSystemPrompt(systemPrompt(cfg)),
@@ -163,6 +170,7 @@ func (s *Session) Seed(msgs []fantasy.Message) {
 func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	s.emit(Event{Type: EventUserMessage, Text: prompt})
 	s.resetFacts()
+	s.called.Store(false)
 	// Routing waits on Jev and the snapshot on the disk: do both at once.
 	var snap Snapshot
 	var wg sync.WaitGroup
@@ -392,6 +400,16 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 	}
 }
 
+// stagger is how long a raced call waits before starting each extra copy:
+// nothing for a request's first call, which usually does the most work,
+// and cfg.Hedge after that.
+func (s *Session) stagger() time.Duration {
+	if !s.called.Swap(true) {
+		return 0
+	}
+	return s.cfg.Hedge
+}
+
 // noteRace logs a raced LLM call. The losing copies were cancelled when the
 // winner finished, so each had used at most about the winner's tokens. They
 // are counted at that bound, with their input as uncached, so reported cost
@@ -512,7 +530,7 @@ When you finish, reply briefly with what you changed and the evidence that it wo
 	if cfg.Snapshot {
 		b.WriteString(`
 
-Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't list the directory or read those files again. For a large one it lists every file and shows the definitions and uses of the code the request names; find anything else with search and definition, asking for several things in one response when you can.`)
+Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't list the directory or read those files again. For a large one it lists every file, includes the repository's instructions for agents, and already shows the definitions, uses and neighbouring tests of the code the request names, so don't look those up again. Find anything else with search and definition, and ask for several things in one response when you can.`)
 	}
 	if cfg.Batch {
 		b.WriteString(`

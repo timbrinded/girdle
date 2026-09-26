@@ -54,7 +54,7 @@ func collect(t *testing.T, s fantasy.StreamResponse) []fantasy.StreamPart {
 func TestFastestCompleteAnswerWins(t *testing.T) {
 	f := &fake{delays: []time.Duration{300 * time.Millisecond, 10 * time.Millisecond, 300 * time.Millisecond}}
 	var got Result
-	m := New(f, 3, func(r Result) { got = r })
+	m := New(f, 3, nil, func(r Result) { got = r })
 	s, err := m.Stream(t.Context(), fantasy.Call{})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestFailureLosesToAnAnswer(t *testing.T) {
 	boom := errors.New("boom")
 	f := &fake{delays: []time.Duration{0, 20 * time.Millisecond}, errs: []error{boom, nil}}
 	var got Result
-	m := New(f, 2, func(r Result) { got = r })
+	m := New(f, 2, nil, func(r Result) { got = r })
 	s, err := m.Stream(t.Context(), fantasy.Call{})
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestFailureLosesToAnAnswer(t *testing.T) {
 func TestAllFailReturnsTheFirstFailure(t *testing.T) {
 	boom := errors.New("boom")
 	f := &fake{delays: []time.Duration{0, 0}, errs: []error{boom, boom}}
-	s, err := New(f, 2, nil).Stream(t.Context(), fantasy.Call{})
+	s, err := New(f, 2, nil, nil).Stream(t.Context(), fantasy.Call{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,35 @@ func TestAllFailReturnsTheFirstFailure(t *testing.T) {
 
 func TestOneCopyIsTheModelItself(t *testing.T) {
 	f := &fake{}
-	if New(f, 1, nil) != fantasy.LanguageModel(f) {
+	if New(f, 1, nil, nil) != fantasy.LanguageModel(f) {
 		t.Fatal("New with one copy should return the model unchanged")
+	}
+}
+
+func TestHedgedCallThatFinishesFastStartsOneCopy(t *testing.T) {
+	f := &fake{delays: []time.Duration{10 * time.Millisecond, time.Second, time.Second}}
+	var got Result
+	m := New(f, 3, func() time.Duration { return 200 * time.Millisecond }, func(r Result) { got = r })
+	s, err := m.Stream(t.Context(), fantasy.Call{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, s)
+	if got.Copies != 1 || f.calls.Load() != 1 {
+		t.Fatalf("copies = %d, calls = %d, want 1 and 1", got.Copies, f.calls.Load())
+	}
+}
+
+func TestHedgedCallThatIsSlowStartsAnotherCopy(t *testing.T) {
+	f := &fake{delays: []time.Duration{2 * time.Second, 10 * time.Millisecond, 10 * time.Millisecond}}
+	var got Result
+	m := New(f, 3, func() time.Duration { return 50 * time.Millisecond }, func(r Result) { got = r })
+	s, err := m.Stream(t.Context(), fantasy.Call{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, s)
+	if got.Copies != 2 || got.Winner != 1 || got.Took > time.Second {
+		t.Fatalf("result = %+v", got)
 	}
 }

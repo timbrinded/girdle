@@ -56,16 +56,19 @@ func TestTakeSnapshot(t *testing.T) {
 func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"price.go":   "package shop\n\n// computeTotal returns the total.\nfunc computeTotal(qty, unit int) int {\n\treturn qty * unit\n}\n",
-		"cart.go":    "package shop\n\nfunc cart() int { return computeTotal(2, 3) }\n",
-		"notes.md":   strings.Repeat("unrelated prose\n", 200),
-		"config.yml": "a: 1\n",
+		"price.go":      "package shop\n\n// computeTotal returns the total.\nfunc computeTotal(qty, unit int) int {\n\treturn qty * unit\n}\n",
+		"cart.go":       "package shop\n\nfunc cart() int { return computeTotal(2, 3) }\n",
+		"notes.md":      strings.Repeat("unrelated prose\n", 200),
+		"config.yml":    "a: 1\n",
+		"AGENTS.md":     "Run tests with make test.\n",
+		"price_test.go": "package shop\n\nfunc TestPrice(t *testing.T) {}\n",
 	})
 	snap := TakeSnapshot(t.Context(), dir, 1000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal` and update `config.yml`.")
 	for _, want := range []string{
 		"too large to include in full", "- notes.md", "- price.go",
 		`<definition name="computeTotal">`, "price.go:3-6", "func computeTotal(qty, unit int) int {",
 		`<uses name="computeTotal">`, "cart.go:3:", `<file path="config.yml">`, `<uses name="sumTotal">`,
+		`<file path="AGENTS.md">`, "Run tests with make test.", `<file path="price_test.go">`, "func TestPrice",
 	} {
 		if !strings.Contains(snap.Text, want) {
 			t.Errorf("snapshot is missing %q:\n%s", want, snap.Text)

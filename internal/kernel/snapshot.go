@@ -197,7 +197,20 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		return true
 	}
 	files, names := NamedCode(request, func(s string) bool { return slices.Contains(paths, s) })
-	for _, f := range files {
+	// Instructions a repository writes for agents come first: they often
+	// say how the code is laid out and how to test it.
+	files = slices.Concat(agentFiles(paths), files)
+	var tests []string
+	for _, name := range names {
+		for _, d := range tools.FindDefinitions(ctx, dir, name) {
+			for _, t := range siblingTests(d.Path, paths) {
+				if !slices.Contains(tests, t) && !slices.Contains(files, t) {
+					tests = append(tests, t)
+				}
+			}
+		}
+	}
+	for _, f := range slices.Concat(files, tests) {
 		data, err := os.ReadFile(filepath.Join(dir, f))
 		switch {
 		case err != nil || isBinary(data):
@@ -233,4 +246,42 @@ func clipLines(s string, n int) string {
 		return s
 	}
 	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n… %d more lines", len(lines)-n)
+}
+
+// agentFiles are the instruction files a repository writes for coding
+// agents, by their conventional names.
+func agentFiles(paths []string) []string {
+	var out []string
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "GIRDLE.md"} {
+		if slices.Contains(paths, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// siblingTests are the test files that sit next to path by the usual naming
+// conventions: x_test.go for Go, test_x.py or tests/test_x.py for Python,
+// and x.test.js or x.spec.ts for JavaScript and TypeScript.
+func siblingTests(path string, paths []string) []string {
+	dir, base := filepath.Split(path)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	var candidates []string
+	switch ext {
+	case ".go":
+		candidates = []string{dir + stem + "_test.go"}
+	case ".py":
+		candidates = []string{dir + "test_" + base, "tests/test_" + base, filepath.Dir(filepath.Clean(dir)) + "/tests/test_" + base}
+	case ".js", ".ts", ".mjs", ".jsx", ".tsx":
+		candidates = []string{dir + stem + ".test" + ext, dir + stem + ".spec" + ext}
+	}
+	var out []string
+	for _, c := range candidates {
+		c = strings.TrimPrefix(filepath.ToSlash(c), "./")
+		if slices.Contains(paths, c) && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }

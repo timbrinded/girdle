@@ -26,10 +26,10 @@ func writeTree(t *testing.T, files map[string]string) string {
 
 func TestFindDefinitions(t *testing.T) {
 	dir := writeTree(t, map[string]string{
-		"a/heading.go": "package a\n\n// Parse reads a heading.\nfunc (p *parser) Parse(b []byte) int {\n\tif len(b) > 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n\ntype Level int\n\nfunc other() {}\n",
+		"a/heading.go":      "package a\n\n// Parse reads a heading.\nfunc (p *parser) Parse(b []byte) int {\n\tif len(b) > 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n\ntype Level int\n\nfunc other() {}\n",
 		"a/heading_test.go": "package a\n\nfunc Parse() {}\n",
-		"more.py": "import x\n\n\n@decorate\ndef window(seq, n,\n           step=1):\n    \"\"\"Doc.\"\"\"\n    if n:\n\n        return seq\n    return []\n\n\ndef after():\n    pass\n",
-		"lib.js": "export function slugify(s) {\n  return s.toLowerCase();\n}\nconst other = 1;\n",
+		"more.py":           "import x\n\n\n@decorate\ndef window(seq, n,\n           step=1):\n    \"\"\"Doc.\"\"\"\n    if n:\n\n        return seq\n    return []\n\n\ndef after():\n    pass\n",
+		"lib.js":            "export function slugify(s) {\n  return s.toLowerCase();\n}\nconst other = 1;\n",
 	})
 	check := func(name, wantPath, wantStart string, wantIn []string, wantOut []string) {
 		t.Helper()

@@ -29,16 +29,21 @@ type Result struct {
 type Model struct {
 	fantasy.LanguageModel
 	Copies int
+	// Stagger, if set, returns how long to wait before starting each extra
+	// copy of a call. Zero starts every copy at once. A later copy starts
+	// only if no answer has arrived, so fast calls cost one copy: the
+	// "hedged request" of The Tail at Scale.
+	Stagger func() time.Duration
 	// OnRace, if set, is called after each race.
 	OnRace func(Result)
 }
 
 // New races copies calls per request. With copies below 2 it returns m.
-func New(m fantasy.LanguageModel, copies int, onRace func(Result)) fantasy.LanguageModel {
+func New(m fantasy.LanguageModel, copies int, stagger func() time.Duration, onRace func(Result)) fantasy.LanguageModel {
 	if copies < 2 {
 		return m
 	}
-	return &Model{LanguageModel: m, Copies: copies, OnRace: onRace}
+	return &Model{LanguageModel: m, Copies: copies, Stagger: stagger, OnRace: onRace}
 }
 
 var errNoAnswer = errors.New("race: every call ended without an answer")
@@ -54,14 +59,22 @@ func (a answer) complete() bool {
 	return a.err == nil && len(a.parts) > 0 && a.parts[len(a.parts)-1].Type == fantasy.StreamPartTypeFinish
 }
 
-// Stream starts Copies identical streams and returns the first to complete,
-// replayed from a buffer. The others are cancelled. If every copy fails, the
-// first failure is returned as it came, so callers handle it as usual.
+// Stream starts up to Copies identical streams, staggered, and returns the
+// first to complete, replayed from a buffer. The others are cancelled. A
+// copy that fails starts the next one straight away. If every copy fails,
+// the first failure is returned as it came, so callers handle it as usual.
 func (m *Model) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
-	start := time.Now()
+	begin := time.Now()
+	var stagger time.Duration
+	if m.Stagger != nil {
+		stagger = m.Stagger()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	answers := make(chan answer, m.Copies)
-	for i := range m.Copies {
+	started := 0
+	launch := func() {
+		i := started
+		started++
 		go func() {
 			stream, err := m.LanguageModel.Stream(ctx, call)
 			if err != nil {
@@ -79,21 +92,47 @@ func (m *Model) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamRe
 			answers <- answer{i: i, parts: parts}
 		}()
 	}
+	var hedge <-chan time.Time
+	schedule := func() {
+		hedge = nil
+		if started >= m.Copies || ctx.Err() != nil {
+			return
+		}
+		if stagger <= 0 {
+			for started < m.Copies {
+				launch()
+			}
+			return
+		}
+		hedge = time.After(stagger)
+	}
+	launch()
+	schedule()
 
 	var firstFailure *answer
 	failed := 0
-	for range m.Copies {
-		a := <-answers
-		if a.complete() {
-			cancel()
-			if m.OnRace != nil {
-				m.OnRace(Result{Copies: m.Copies, Winner: a.i, Failed: failed, Took: time.Since(start), Usage: a.parts[len(a.parts)-1].Usage})
+	for done := 0; done < started; {
+		select {
+		case <-hedge:
+			launch()
+			schedule()
+		case a := <-answers:
+			done++
+			if a.complete() {
+				cancel()
+				if m.OnRace != nil {
+					m.OnRace(Result{Copies: started, Winner: a.i, Failed: failed, Took: time.Since(begin), Usage: a.parts[len(a.parts)-1].Usage})
+				}
+				return replay(a.parts), nil
 			}
-			return replay(a.parts), nil
-		}
-		failed++
-		if firstFailure == nil {
-			firstFailure = &a
+			failed++
+			if firstFailure == nil {
+				firstFailure = &a
+			}
+			if started < m.Copies && ctx.Err() == nil {
+				launch()
+				schedule()
+			}
 		}
 	}
 	cancel()

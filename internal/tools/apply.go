@@ -26,7 +26,7 @@ func Batched(dir string) []fantasy.AgentTool {
 
 // ApplyDescription is the apply tool's description, shared by every tool that
 // takes an ApplyInput.
-const ApplyDescription = "Apply file changes in order, then run a check command. Each change either replaces exact text in a file (old_text must match exactly once) or, without old_text, writes the whole file. The check runs only if every change applied, and its output ends with the exit code."
+const ApplyDescription = "Apply file changes in order, then run a check command. Each change either replaces exact text in a file (old_text must match exactly once) or, without old_text, writes the whole file. The check runs only if every change applied, with pipefail set, and its output ends with the exit code."
 
 // Change is one edit or whole-file write inside an apply call.
 type Change struct {
@@ -94,7 +94,8 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 		return fantasy.NewTextResponse(b.String()), nil
 	}
 	fmt.Fprintf(&b, "$ %s\n", in.Check)
-	res, _ := t.bash(ctx, bashInput{Command: in.Check}, call)
+	// pipefail, so that "go test | tail" still fails when the tests do.
+	res, _ := t.bash(ctx, bashInput{Command: "set -o pipefail\n" + in.Check}, call)
 	b.WriteString(res.Content)
 	return fantasy.NewTextResponse(b.String()), nil
 }
