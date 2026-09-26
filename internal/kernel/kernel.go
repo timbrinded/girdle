@@ -410,14 +410,17 @@ func (s *Session) stagger() time.Duration {
 	return s.cfg.Hedge
 }
 
-// noteRace logs a raced LLM call. The losing copies were cancelled when the
-// winner finished, so each had used at most about the winner's tokens. They
-// are counted at that bound, with their input as uncached, so reported cost
-// never flatters racing.
+// noteRace logs a raced LLM call and counts the losing copies' tokens. Each
+// loser is priced like the winner: the same prompt, cached the same way, and
+// the whole answer, though it was cancelled partway through. That is still an
+// upper bound. On the scale suite it came to $0.0072 a run against $0.0055
+// actually billed, where treating the losers' prompts as uncached had come
+// to $0.0142.
 func (s *Session) noteRace(r race.Result) {
 	losers := int64(r.Copies - 1)
 	extra := Usage{
-		InputTokens:     losers * (r.Usage.InputTokens + r.Usage.CacheReadTokens),
+		InputTokens:     losers * r.Usage.InputTokens,
+		CacheReadTokens: losers * r.Usage.CacheReadTokens,
 		OutputTokens:    losers * r.Usage.OutputTokens,
 		ReasoningTokens: losers * r.Usage.ReasoningTokens,
 	}

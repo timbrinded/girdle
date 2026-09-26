@@ -196,21 +196,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		snap.Bytes += len(text)
 		return true
 	}
-	files, names := NamedCode(request, func(s string) bool { return slices.Contains(paths, s) })
-	// Instructions a repository writes for agents come first: they often
-	// say how the code is laid out and how to test it.
-	files = slices.Concat(agentFiles(paths), files)
-	var tests []string
-	for _, name := range names {
-		for _, d := range tools.FindDefinitions(ctx, dir, name) {
-			for _, t := range siblingTests(d.Path, paths) {
-				if !slices.Contains(tests, t) && !slices.Contains(files, t) {
-					tests = append(tests, t)
-				}
-			}
-		}
-	}
-	for _, f := range slices.Concat(files, tests) {
+	addFile := func(f string) {
 		data, err := os.ReadFile(filepath.Join(dir, f))
 		switch {
 		case err != nil || isBinary(data):
@@ -220,13 +206,31 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 			add(fmt.Sprintf("<file path=%q>%s, %d lines: too large to include; use search, definition or read with an offset</file>\n", f, size(len(data)), bytes.Count(data, []byte{'\n'})+1))
 		}
 	}
+
+	// In priority order, since the budget may run out: the repository's
+	// instructions for agents, the files the request names, the named
+	// code's definitions and uses, and last the tests beside that code.
+	files, names := NamedCode(request, func(s string) bool { return slices.Contains(paths, s) })
+	files = slices.Concat(agentFiles(paths), files)
+	for _, f := range files {
+		addFile(f)
+	}
+	var tests []string
 	for _, name := range names {
 		for _, d := range tools.FindDefinitions(ctx, dir, name) {
 			add(fmt.Sprintf("<definition name=%q>\n%s\n</definition>\n", name, d.String()))
+			for _, t := range siblingTests(d.Path, paths) {
+				if !slices.Contains(tests, t) && !slices.Contains(files, t) {
+					tests = append(tests, t)
+				}
+			}
 		}
 		if uses, err := tools.Search(ctx, dir, `\b`+name+`\b`, "", "", false); err == nil {
 			add(fmt.Sprintf("<uses name=%q>\n%s\n</uses>\n", name, clipLines(uses, 40)))
 		}
+	}
+	for _, t := range tests {
+		addFile(t)
 	}
 
 	var b strings.Builder

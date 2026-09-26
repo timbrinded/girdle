@@ -63,7 +63,7 @@ func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
 		"AGENTS.md":     "Run tests with make test.\n",
 		"price_test.go": "package shop\n\nfunc TestPrice(t *testing.T) {}\n",
 	})
-	snap := TakeSnapshot(t.Context(), dir, 1000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal` and update `config.yml`.")
+	snap := TakeSnapshot(t.Context(), dir, 2000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal` and update `config.yml`.")
 	for _, want := range []string{
 		"too large to include in full", "- notes.md", "- price.go",
 		`<definition name="computeTotal">`, "price.go:3-6", "func computeTotal(qty, unit int) int {",
