@@ -95,7 +95,16 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	fmt.Fprintf(&b, "$ %s\n", in.Check)
 	// pipefail, so that "go test | tail" still fails when the tests do.
 	res, _ := t.bash(ctx, bashInput{Command: "set -o pipefail\n" + in.Check}, call)
-	b.WriteString(res.Content)
+	out := res.Content
+	if code, ok := ExitCode(out); ok && code != 0 {
+		if hints := Hints(ctx, t.dir, out); hints != "" {
+			// The hints go before the exit-code line, which stays last.
+			if head, tail, found := strings.CutLast(out, "\n"+exitTrailer); found {
+				out = head + "\n\n" + hints + "\n" + exitTrailer + tail
+			}
+		}
+	}
+	b.WriteString(out)
 	return fantasy.NewTextResponse(b.String()), nil
 }
 

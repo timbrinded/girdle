@@ -45,9 +45,13 @@ type StepPolicy struct {
 	Coverage float64
 }
 
-// DefaultStepPolicy only stops early when Jev is sure. A miss costs one extra
-// LLM step; a wrong stop hands back unfinished work.
-var DefaultStepPolicy = StepPolicy{Complete: 0.8, Coverage: 0.5}
+// DefaultStepPolicy stops early from a "complete" noul of 0.7. In the
+// 2026-09-26 decision logs every early stop from 0.80 to 0.85 passed its
+// hidden tests (27 of 27), and in all 28 runs that went on from 0.70 to 0.80
+// no later change touched code. The runs that went on only added tests, so
+// the kernel also refuses to stop early while the request asks for tests and
+// no test file has changed.
+var DefaultStepPolicy = StepPolicy{Complete: 0.7, Coverage: 0.5}
 
 // Decide maps Jev's answers to Stop or Continue.
 func (p StepPolicy) Decide(a map[string]jev.Answer, requirements []string) (Action, string) {

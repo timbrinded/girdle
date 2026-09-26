@@ -26,7 +26,8 @@ const (
 	EventSnapshot      EventType = "snapshot"   // files sent with a request
 	EventStep          EventType = "step"       // one LLM call: timing and usage
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
-	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, not ready or none written
+	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, invalid, not ready or none written
+	EventHeartbeat     EventType = "heartbeat"  // Jev's view of whether the turn is progressing
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"
@@ -47,9 +48,11 @@ type Event struct {
 	Usage    *Usage                    `json:"usage,omitempty"`
 	Decision *checkpoint.Decision      `json:"decision,omitempty"`
 	Route    *checkpoint.RouteDecision `json:"route,omitempty"`
-	Outcome  Outcome                   `json:"outcome,omitempty"`
-	Reason   string                    `json:"reason,omitempty"`
-	Meta     map[string]string         `json:"meta,omitempty"`
+	// Heartbeat is set on heartbeat events.
+	Heartbeat *checkpoint.HeartbeatDecision `json:"heartbeat,omitempty"`
+	Outcome   Outcome                       `json:"outcome,omitempty"`
+	Reason    string                        `json:"reason,omitempty"`
+	Meta      map[string]string             `json:"meta,omitempty"`
 	// TTFTMS is how long a step waited for its first streamed token, and
 	// DurationMS how long the LLM call took in all.
 	TTFTMS     int64 `json:"ttft_ms,omitzero"`

@@ -180,7 +180,7 @@ func FindDefinitions(ctx context.Context, dir, name string) []Definition {
 			}
 			src, first, truncated := extractBody(lines, i, filepath.Ext(path))
 			d := Definition{Path: path, StartLine: first + 1, Source: src, Truncated: truncated}
-			if isTestFile(path) {
+			if IsTestFile(path) {
 				testDefs = append(testDefs, d)
 			} else {
 				defs = append(defs, d)
@@ -258,7 +258,9 @@ func leadingWidth(s string) int {
 	return len(s) - len(strings.TrimLeft(s, " \t"))
 }
 
-func isTestFile(path string) bool {
+// IsTestFile reports whether path is a test file by the usual naming
+// conventions of Go, Python and JavaScript or TypeScript.
+func IsTestFile(path string) bool {
 	base := filepath.Base(path)
 	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
 		strings.Contains(base, ".test.") || strings.Contains(path, "/tests/") || strings.HasPrefix(path, "tests/")

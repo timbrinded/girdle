@@ -169,6 +169,10 @@ func (m *model) handleEvent(e kernel.Event) {
 		if r := e.Route; r != nil {
 			m.appendLine(decisionStyle.Render(fmt.Sprintf("◆ jev · complexity %.2f → %s reasoning · %dms", r.Score, r.Effort, r.LatencyMS)))
 		}
+	case kernel.EventHeartbeat:
+		if h := e.Heartbeat; h != nil && h.Action != checkpoint.Continue {
+			m.appendLine(decisionStyle.Render("◆ jev · heartbeat: " + h.Rule))
+		}
 	case kernel.EventCrossCheck:
 		m.appendLine(decisionStyle.Render("◆ cross-check " + e.Reason))
 	case kernel.EventNudge:

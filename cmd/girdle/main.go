@@ -52,12 +52,13 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
-		fast        = flag.Bool("fast", false, "fast flow: -snapshot -batch -early-stop -speculate -crosscheck, and -race 3 -hedge 3s unless set")
+		fast        = flag.Bool("fast", false, "fast flow: -snapshot -batch -early-stop -speculate -crosscheck -heartbeat, and -race 3 -hedge 3s unless set")
 		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
 		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
 		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 1, or 3 with -fast)")
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
+		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
 	)
@@ -89,6 +90,8 @@ func run() int {
 	}
 	cfg.Speculate = cfg.Route && (*fast || *speculate)
 	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && (*fast || *crossCheck)
+	cfg.Heartbeat = !*noJev && (*fast || *heartbeat)
+	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
 	cfg.Hedge = *hedge
 	if cfg.Hedge < 0 {
 		cfg.Hedge = 0

@@ -29,6 +29,7 @@ var RouteQuestions = map[string]jev.Question{
 		"Moderate: a few coordinated edits, or an investigation in one area",
 		"Hard: multi-file design, subtle debugging, precise edge cases or many separate requirements",
 	),
+	"tests": jev.Noul("Does `request` ask the agent to write new tests or change existing ones?"),
 }
 
 // RoutePolicy maps the complexity score (0 to 2) to a reasoning effort.
@@ -49,9 +50,11 @@ var DefaultRoutePolicy = RoutePolicy{LowBelow: 1.85, HighFrom: 1.9}
 
 // RouteDecision records the routing checkpoint.
 type RouteDecision struct {
-	Checkpoint  string                `json:"checkpoint"`
-	Effort      Effort                `json:"effort"`
-	Score       float64               `json:"score"`
+	Checkpoint string  `json:"checkpoint"`
+	Effort     Effort  `json:"effort"`
+	Score      float64 `json:"score"`
+	// Tests is Jev's noul for "the request asks for tests".
+	Tests       float64               `json:"tests,omitzero"`
 	State       RouteState            `json:"state"`
 	Answers     map[string]jev.Answer `json:"answers,omitempty"`
 	JevModel    string                `json:"jev_model,omitempty"`
@@ -73,6 +76,7 @@ func Route(ctx context.Context, c *jev.Client, s RouteState, p RoutePolicy, fall
 	}
 	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
 	d.Score = res.Answers["complexity"].Score
+	d.Tests = res.Answers["tests"].Noul
 	switch {
 	case d.Score < p.LowBelow:
 		d.Effort = EffortLow

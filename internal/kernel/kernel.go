@@ -84,6 +84,10 @@ type Config struct {
 	// background and runs it once the agent's own check passes. It needs
 	// Batch and EarlyStop.
 	CrossCheck bool
+	// Heartbeat asks Jev every few steps whether the turn is looping or
+	// drifting, and nudges it if so. It needs Checkpoints.
+	Heartbeat       bool
+	HeartbeatPolicy checkpoint.HeartbeatPolicy
 }
 
 // Session is one conversation in one working directory.
@@ -106,8 +110,11 @@ type Session struct {
 	called atomic.Bool
 	// cross delivers this request's cross-check, until it has run.
 	cross chan *crossCheck
-	// crossFeedback is a failed cross-check waiting to go to the LLM.
-	crossFeedback string
+	// pending is a message waiting to go to the LLM once the kernel has
+	// stopped its turn: a failed cross-check or a heartbeat nudge.
+	pending, pendingWhy string
+	// steps and heartbeat nudges in this request.
+	requestSteps, beats int
 	// task is the current request, as the user wrote it.
 	task string
 
@@ -115,6 +122,10 @@ type Session struct {
 	edited  map[string]bool // files changed by a successful edit or apply
 	lastOK  bool            // the latest tool result was a check that exited 0
 	lastCmd string          // that check
+	// testsEdited is set once a change in this request touched a test file.
+	testsEdited bool
+	// testsAsked is Jev's noul for "the request asks for tests".
+	testsAsked float64
 }
 
 // NewSession builds a session with the four built-in tools.
@@ -146,6 +157,7 @@ func NewSession(cfg Config) *Session {
 		"race":        fmt.Sprint(max(cfg.Race, 1)),
 		"speculate":   fmt.Sprint(cfg.Speculate),
 		"crosscheck":  fmt.Sprint(cfg.CrossCheck),
+		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
 	}})
 	return s
 }
@@ -225,6 +237,8 @@ func (s *Session) Resume(ctx context.Context, task string) (Outcome, string) {
 
 func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
+	s.testsEdited, s.testsAsked = false, 0
+	s.requestSteps, s.beats = 0, 0
 }
 
 // route asks Jev how hard the request is and sets this run's reasoning effort.
@@ -245,6 +259,7 @@ func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.
 
 func (s *Session) applyRoute(d checkpoint.RouteDecision) {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
+	s.testsAsked = d.Tests
 	s.callOptions = s.cfg.EffortOptions(d.Effort)
 	s.emit(Event{Type: EventRoute, Route: &d})
 }
@@ -266,13 +281,17 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 			if early {
 				return s.finishEarly()
 			}
-			if fb := s.crossFeedback; fb != "" {
-				// The agent's check passed but the cross-check failed: let
-				// it look before anyone calls the task done.
-				s.crossFeedback = ""
-				s.emit(Event{Type: EventNudge, Text: fb, Reason: "crosscheck"})
-				s.history = append(s.history, fantasy.NewUserMessage(fb))
+			if msg := s.pending; msg != "" {
+				// The kernel stopped the turn to say something: a failed
+				// cross-check, or a heartbeat nudge.
+				s.pending = ""
+				s.emit(Event{Type: EventNudge, Text: msg, Reason: s.pendingWhy})
+				s.history = append(s.history, fantasy.NewUserMessage(msg))
 				continue
+			}
+			if s.pendingWhy == "blocked" {
+				s.pendingWhy = ""
+				return s.end(OutcomeNeedsUser, "blocked")
 			}
 			lastText = text
 		}
@@ -310,6 +329,14 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 	calls := map[string]fantasy.ToolCallContent{}
 
 	stopWhen := []fantasy.StopCondition{fantasy.StepCountIs(s.cfg.MaxStepsPerTurn)}
+	if s.cfg.Heartbeat && s.cfg.Checkpoints && s.cfg.Jev != nil {
+		stopWhen = append(stopWhen, func(steps []fantasy.StepResult) bool {
+			if len(steps[len(steps)-1].Content.ToolCalls()) == 0 {
+				return false
+			}
+			return s.heartbeat(ctx, task, requirements)
+		})
+	}
 	if s.earlyStopOn() {
 		stopWhen = append(stopWhen, func(steps []fantasy.StepResult) bool {
 			last := steps[len(steps)-1]
@@ -322,7 +349,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			// the agent's own check just passed.
 			if s.cross != nil && s.lastOK && len(s.edited) > 0 {
 				if fb := s.runCrossCheck(ctx); fb != "" {
-					s.crossFeedback = fb
+					s.pending, s.pendingWhy = fb, "crosscheck"
 					return true
 				}
 			}
@@ -406,6 +433,7 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 		s.lastOK = false
 		if p := inputField(call.Input, "path"); p != "" && !isErr {
 			s.edited[p] = true
+			s.testsEdited = s.testsEdited || tools.IsTestFile(p)
 		}
 	case "bash":
 		// With apply, checks go through apply: a grep that exits 0 is not
@@ -423,6 +451,7 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 		}
 		for _, p := range paths {
 			s.edited[p] = true
+			s.testsEdited = s.testsEdited || tools.IsTestFile(p)
 		}
 		code, ran := tools.ExitCode(text)
 		s.lastOK = check != "" && ran && code == 0
@@ -462,6 +491,31 @@ func (s *Session) noteRace(r race.Result) {
 	}})
 }
 
+// heartbeat asks Jev every few steps of a request whether the work is
+// looping, drifting or blocked, and stops the turn to act on it.
+func (s *Session) heartbeat(ctx context.Context, task string, requirements []string) bool {
+	s.requestSteps++
+	p := s.cfg.HeartbeatPolicy
+	if p.Every <= 0 || s.requestSteps%p.Every != 0 || s.beats >= p.MaxNudges {
+		return false
+	}
+	d := checkpoint.Heartbeat(ctx, s.cfg.Jev, checkpoint.TurnState{
+		Task: task, Requirements: requirements, RecentSteps: lastN(s.steps, p.Every+2),
+	}, p)
+	s.addUsage(Usage{JevTokens: d.InputTokens})
+	s.emit(Event{Type: EventHeartbeat, Heartbeat: &d})
+	switch d.Action {
+	case checkpoint.Nudge:
+		s.beats++
+		s.pending, s.pendingWhy = d.Nudge, d.Rule
+		return true
+	case checkpoint.Ask:
+		s.pendingWhy = "blocked"
+		return true
+	}
+	return false
+}
+
 func (s *Session) earlyStopOn() bool {
 	return s.cfg.EarlyStop && s.cfg.Checkpoints && s.cfg.Jev != nil
 }
@@ -471,6 +525,11 @@ func (s *Session) earlyStopOn() bool {
 // a check that exited 0, is worth asking about.
 func (s *Session) stepEnd(ctx context.Context, task string, requirements []string, text string) bool {
 	if !s.lastOK || len(s.edited) == 0 {
+		return false
+	}
+	// A fact the threshold can't see: the request asks for tests and none
+	// have been written yet. Jev's coverage answers miss this.
+	if s.testsAsked >= 0.5 && !s.testsEdited {
 		return false
 	}
 	d := checkpoint.StepEnd(ctx, s.cfg.Jev, checkpoint.TurnState{
@@ -573,7 +632,7 @@ Each request starts with a repository snapshot, taken just before the request. F
 Every response you send costs the user several seconds, so finish in as few as you can. Work in at most three moves: gather, change, and only if needed fix.
 - Gather: if the snapshot isn't enough, make one lookup call with every file, line range, definition and search you will need. Ask generously rather than coming back for more.
 - Change: make one apply call with every edit and new file the task needs, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. When the task reports a bug, put a test that reproduces it in the same apply as the fix, so the check shows it fixed. Before you write, work out the edge cases the task's words imply, such as empty input, a one-pass iterator wherever it says iterable, equal items, and the smallest and largest sizes, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
-- Fix: if the check fails, send one more apply with the fixes.
+- Fix: if the check fails, send one more apply with the fixes. Start its check with a quick run of just what failed, joined to the full proof with &&, so a repeat failure shows in seconds.
 The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". Keep any text to a sentence.
 
 Writing takes time too, so write as little as the task allows. Change existing files with old_text and new_text edits, each old_text short but unique; use content only for new files or files you are mostly rewriting. Changes apply in order, so never let two changes touch the same lines: merge them into one. Keep new tests compact: one focused test per behaviour.`)

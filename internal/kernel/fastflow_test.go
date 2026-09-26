@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,12 +71,18 @@ func fakeJev(t *testing.T, overrides ...map[string]float64) *jev.Client {
 				}
 			}
 			switch k {
+			case "trajectory":
+				choice := "progressing"
+				if len(overrides) > 0 && overrides[0]["looping"] > 0 {
+					choice = "looping"
+				}
+				answers[k] = jev.Answer{Type: "choice", Choice: choice, Probabilities: map[string]float64{choice: 0.9}}
 			case "complexity":
 				time.Sleep(100 * time.Millisecond)
 				answers[k] = jev.Answer{Type: "score", Score: 1.0}
 			case "status":
 				answers[k] = jev.Answer{Type: "choice", Choice: "done", Confidence: 0.95}
-			case "needless_ask":
+			case "needless_ask", "tests":
 				answers[k] = jev.Answer{Type: "noul", Noul: 0}
 			default:
 				answers[k] = jev.Answer{Type: "noul", Noul: 0.95}
@@ -228,5 +235,90 @@ func TestCrossCheck(t *testing.T) {
 				t.Fatalf("Run = %s %s", outcome, reason)
 			}
 		})
+	}
+}
+
+func TestNoEarlyStopBeforeRequestedTests(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(Config{
+		Model: scriptedModel{}, ModelName: "scripted", Jev: fakeJev(t, map[string]float64{"tests": 0.9}), Dir: dir,
+		Policy: checkpoint.DefaultPolicy, Checkpoints: true,
+		Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
+		EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
+		Snapshot:      true, Batch: true, EarlyStop: true, StepPolicy: checkpoint.DefaultStepPolicy,
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// The request asks for tests and the change touches none: the run must
+	// not stop early, and ends at the turn-end checkpoint instead.
+	if outcome, reason := s.Run(ctx, "Replace old with new in a.txt and add a test."); outcome != OutcomeDone || reason == "done_early" {
+		t.Fatalf("Run = %s, %s", outcome, reason)
+	}
+}
+
+// loopModel looks something up on every step until a Girdle nudge arrives,
+// then replies.
+type loopModel struct{ fantasy.LanguageModel }
+
+func (loopModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	nudged := false
+	for _, m := range call.Prompt {
+		for _, p := range m.Content {
+			if t, ok := fantasy.AsMessagePart[fantasy.TextPart](p); ok && strings.Contains(t.Text, "repeat similar lookups") {
+				nudged = true
+			}
+		}
+	}
+	return func(yield func(fantasy.StreamPart) bool) {
+		if nudged {
+			for _, p := range []fantasy.StreamPart{
+				{Type: fantasy.StreamPartTypeTextStart, ID: "t"},
+				{Type: fantasy.StreamPartTypeTextDelta, ID: "t", Delta: "Changing approach."},
+				{Type: fantasy.StreamPartTypeTextEnd, ID: "t"},
+				{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop},
+			} {
+				if !yield(p) {
+					return
+				}
+			}
+			return
+		}
+		if yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: fmt.Sprint(len(call.Prompt)), ToolCallName: "lookup", ToolCallInput: `{"searches":["old"]}`}) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+		}
+	}, nil
+}
+
+func TestHeartbeatNudgesALoop(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var nudges []Event
+	lookups := 0
+	s := NewSession(Config{
+		Model: loopModel{}, ModelName: "loop", Jev: fakeJev(t, map[string]float64{"looping": 1}), Dir: dir,
+		Policy: checkpoint.DefaultPolicy, Checkpoints: true, Batch: true,
+		Heartbeat: true, HeartbeatPolicy: checkpoint.DefaultHeartbeatPolicy,
+		Emit: func(e Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			if e.Type == EventNudge {
+				nudges = append(nudges, e)
+			}
+			if e.Type == EventToolCall {
+				lookups++
+			}
+		},
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	s.Run(ctx, "Find where old is used.")
+	if len(nudges) != 1 || nudges[0].Reason != "looping" || lookups != checkpoint.DefaultHeartbeatPolicy.Every {
+		t.Fatalf("%d nudges (%v) after %d lookups", len(nudges), nudges, lookups)
 	}
 }
