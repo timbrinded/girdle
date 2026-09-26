@@ -88,13 +88,23 @@ type Config struct {
 	// drifting, and nudges it if so. It needs Checkpoints.
 	Heartbeat       bool
 	HeartbeatPolicy checkpoint.HeartbeatPolicy
+	// FastModel, if set, serves every LLM call after a request's first,
+	// and the cross-check writer; with FastAll it serves every call.
+	// FastOptions builds its provider options for an effort.
+	FastModel     fantasy.LanguageModel
+	FastModelName string
+	FastOptions   func(checkpoint.Effort) fantasy.ProviderOptions
+	FastAll       bool
+	// FastEffort, if set, is the effort for every fast-model call, in
+	// place of the routed one.
+	FastEffort checkpoint.Effort
 }
 
 // Session is one conversation in one working directory.
 type Session struct {
 	ID      string
 	cfg     Config
-	model   fantasy.LanguageModel // cfg.Model, raced if cfg.Race asks for it
+	model   sessionModel // cfg.Model and cfg.FastModel, raced if cfg.Race asks for it
 	tools   []fantasy.AgentTool
 	agent   fantasy.Agent
 	history []fantasy.Message
@@ -106,8 +116,14 @@ type Session struct {
 	callOptions fantasy.ProviderOptions
 	// routing delivers Jev's route while the first call runs on a guess.
 	routing chan checkpoint.RouteDecision
-	// called is set once a request's first LLM call has started.
+	// called is set once a request's first LLM call has started, and calls
+	// counts the request's LLM calls.
 	called atomic.Bool
+	calls  atomic.Int32
+	// effort is the routed reasoning effort for this request.
+	effort checkpoint.Effort
+	// lastFast records whether the latest LLM call went to the fast model.
+	lastFast atomic.Bool
 	// cross delivers this request's cross-check, until it has run.
 	cross chan *crossCheck
 	// pending is a message waiting to go to the LLM once the kernel has
@@ -137,7 +153,10 @@ func NewSession(cfg Config) *Session {
 	if cfg.Batch {
 		s.tools = tools.Batched(cfg.Dir)
 	}
-	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
+	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace(false)), s: s}
+	if cfg.FastModel != nil {
+		s.model.fast = race.New(cfg.FastModel, cfg.Race, s.stagger, s.noteRace(true))
+	}
 	s.agent = fantasy.NewAgent(
 		s.model,
 		fantasy.WithSystemPrompt(systemPrompt(cfg)),
@@ -158,6 +177,8 @@ func NewSession(cfg Config) *Session {
 		"speculate":   fmt.Sprint(cfg.Speculate),
 		"crosscheck":  fmt.Sprint(cfg.CrossCheck),
 		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
+		"fast_model":  cfg.FastModelName,
+		"fast_all":    fmt.Sprint(cfg.FastAll),
 	}})
 	return s
 }
@@ -178,6 +199,17 @@ func (s *Session) addUsage(u Usage) {
 	s.usage.ReasoningTokens += u.ReasoningTokens
 	s.usage.CacheReadTokens += u.CacheReadTokens
 	s.usage.JevTokens += u.JevTokens
+	s.usage.FastInputTokens += u.FastInputTokens
+	s.usage.FastOutputTokens += u.FastOutputTokens
+	s.usage.FastCacheReadTokens += u.FastCacheReadTokens
+}
+
+// addCallUsage adds one LLM call's tokens, marking the fast model's.
+func (s *Session) addCallUsage(u Usage, fast bool) {
+	if fast {
+		u.FastInputTokens, u.FastOutputTokens, u.FastCacheReadTokens = u.InputTokens, u.OutputTokens, u.CacheReadTokens
+	}
+	s.addUsage(u)
 }
 
 func usageOf(u fantasy.Usage) Usage {
@@ -195,6 +227,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	s.task = prompt
 	s.resetFacts()
 	s.called.Store(false)
+	s.calls.Store(0)
 	// Routing waits on Jev and the snapshot on the disk: do both at once.
 	var snap Snapshot
 	var wg sync.WaitGroup
@@ -260,6 +293,7 @@ func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.
 func (s *Session) applyRoute(d checkpoint.RouteDecision) {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	s.testsAsked = d.Tests
+	s.effort = d.Effort
 	s.callOptions = s.cfg.EffortOptions(d.Effort)
 	s.emit(Event{Type: EventRoute, Route: &d})
 }
@@ -382,7 +416,10 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 		},
 		OnStreamFinish: func(u fantasy.Usage, _ fantasy.FinishReason, _ fantasy.ProviderMetadata) error {
 			step := usageOf(u)
-			e := Event{Type: EventStep, DurationMS: time.Since(stepStart).Milliseconds(), Usage: &step}
+			fast := s.lastFast.Load()
+			s.addCallUsage(step, fast)
+			e := Event{Type: EventStep, DurationMS: time.Since(stepStart).Milliseconds(), Usage: &step,
+				Meta: map[string]string{"model": map[bool]string{true: "fast", false: "main"}[fast]}}
 			if !firstToken.IsZero() {
 				e.TTFTMS = firstToken.Sub(stepStart).Milliseconds()
 			}
@@ -419,8 +456,9 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 	for _, st := range res.Steps {
 		s.history = append(s.history, st.Messages...)
 	}
+	// Each call's tokens were counted as it finished; this is the turn's
+	// total, for the log.
 	u := usageOf(res.TotalUsage)
-	s.addUsage(u)
 	s.emit(Event{Type: EventTurnEnd, Steps: len(res.Steps), Usage: &u})
 	return res.Response.Content.Text(), early, nil
 }
@@ -461,6 +499,19 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 	}
 }
 
+// mainOptions are the main model's options for the current request.
+func (s *Session) mainOptions() fantasy.ProviderOptions {
+	if s.callOptions == nil && s.cfg.EffortOptions != nil {
+		return s.cfg.EffortOptions(cmp.Or(s.effort, checkpoint.EffortLow))
+	}
+	return s.callOptions
+}
+
+// fastEffort is the reasoning effort for a fast-model call.
+func (s *Session) fastEffort() checkpoint.Effort {
+	return cmp.Or(s.cfg.FastEffort, s.effort, checkpoint.EffortLow)
+}
+
 // stagger is how long a raced call waits before starting each extra copy:
 // nothing for a request's first call, which usually does the most work,
 // and cfg.Hedge after that.
@@ -477,7 +528,11 @@ func (s *Session) stagger() time.Duration {
 // upper bound. On the scale suite it came to $0.0072 a run against $0.0055
 // actually billed, where treating the losers' prompts as uncached had come
 // to $0.0142.
-func (s *Session) noteRace(r race.Result) {
+func (s *Session) noteRace(fast bool) func(race.Result) {
+	return func(r race.Result) { s.noteRaceOn(r, fast) }
+}
+
+func (s *Session) noteRaceOn(r race.Result, fast bool) {
 	losers := int64(r.Copies - 1)
 	extra := Usage{
 		InputTokens:     losers * r.Usage.InputTokens,
@@ -485,7 +540,7 @@ func (s *Session) noteRace(r race.Result) {
 		OutputTokens:    losers * r.Usage.OutputTokens,
 		ReasoningTokens: losers * r.Usage.ReasoningTokens,
 	}
-	s.addUsage(extra)
+	s.addCallUsage(extra, fast)
 	s.emit(Event{Type: EventRace, Usage: &extra, DurationMS: r.Took.Milliseconds(), Meta: map[string]string{
 		"copies": fmt.Sprint(r.Copies), "winner": fmt.Sprint(r.Winner), "failed": fmt.Sprint(r.Failed),
 	}})

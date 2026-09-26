@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -29,8 +30,10 @@ import (
 const crossCheckMarker = "girdle_crosscheck"
 
 // crossCheckWait is how long a passing check waits for a cross-check that
-// isn't written yet before going on without it.
-const crossCheckWait = 15 * time.Second
+// isn't written yet before going on without it. In 110 benchmark runs the
+// writer finished a median 10.5 s before it was needed; the two times it
+// wasn't ready, waiting 15 s bought nothing.
+const crossCheckWait = 5 * time.Second
 
 const crossCheckRole = `[Girdle] Another agent is doing the task above right now, and you won't see its code. Check its work independently. Write one small test file for the behaviour the task asks for, straight from the task's words: the cases it states, and the edge cases those words imply, such as empty input, one-pass iterators where it says iterable, equal items, boundaries and rounding. A wrong test costs the other agent time, so test only what the task clearly specifies, and compare each result with a literal expected value you worked out by hand, never with a value computed in the test. Use only the names the task and the existing code give, in the repository's own test framework and style, with the same package name and import paths as the existing tests beside the code. Make it a new file with girdle_crosscheck in its name, for example girdle_crosscheck_test.go beside the code, tests/test_girdle_crosscheck.py, or girdle_crosscheck.test.js. Send it in one apply call whose check runs only that file and never hides its exit code. If the snapshot doesn't show the code, write the test anyway from the names and behaviour the task gives. Only if the task asks for nothing a test could check, send an apply with no changes.`
 
@@ -63,13 +66,17 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 			in, recorded = a, true
 			return fantasy.NewTextResponse("Recorded."), nil
 		})
-	opts := s.cfg.ProviderOptions
-	if s.cfg.EffortOptions != nil {
+	// It runs on the fast model when there is one: it is mechanical work,
+	// and a slow writer holds up a quick agent.
+	model, fast, opts := s.cfg.Model, false, s.cfg.ProviderOptions
+	switch {
+	case s.cfg.FastModel != nil:
+		model, fast, opts = s.cfg.FastModel, true, s.cfg.FastOptions(cmp.Or(s.cfg.FastEffort, checkpoint.EffortLow))
+	case s.cfg.EffortOptions != nil:
 		opts = s.cfg.EffortOptions(checkpoint.EffortLow)
 	}
-	// The writer is hedged: when the agent finishes quickly, a slow writer
-	// holds the run up, so a copy that hasn't answered in 2 s gets company.
-	agent := fantasy.NewAgent(race.New(s.cfg.Model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace),
+	// The writer is hedged: a copy that hasn't answered in 2 s gets company.
+	agent := fantasy.NewAgent(race.New(model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace(fast)),
 		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
 		fantasy.WithTools(record),
 		fantasy.WithProviderOptions(opts),
@@ -86,8 +93,8 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 		return &crossCheck{none: "the call failed"}
 	}
 	u := usageOf(res.TotalUsage)
-	s.addUsage(u)
-	s.emit(Event{Type: EventStep, DurationMS: time.Since(start).Milliseconds(), Usage: &u, Meta: map[string]string{"role": "crosscheck"}})
+	s.addCallUsage(u, fast)
+	s.emit(Event{Type: EventStep, DurationMS: time.Since(start).Milliseconds(), Usage: &u, Meta: map[string]string{"role": "crosscheck", "model": map[bool]string{true: "fast", false: "main"}[fast]}})
 	switch {
 	case !recorded:
 		return &crossCheck{none: "no apply call: " + clipMiddle(res.Response.Content.Text(), 300)}

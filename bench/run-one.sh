@@ -6,7 +6,8 @@
 #
 # Agents: girdle, girdle-nojev (checkpoints off), girdle-fast (-fast flow),
 # pi (vanilla Pi, run in tmux). Girdle names take optional suffixes:
-# -r<N> races N copies of each LLM call, and -minimal or -low fixes the effort.
+# -r<N> races N copies of each LLM call, -minimal or -low fixes the effort,
+# and -mix or -oss (before any of those) moves calls to a fast model.
 # Expects OPENROUTER_API_KEY and TYPESAFE_API_KEY in the environment.
 set -uo pipefail
 
@@ -45,6 +46,24 @@ if [[ $base =~ ^(.*)-r([0-9]+)$ ]]; then
   race=${BASH_REMATCH[2]}
 fi
 
+# -mix sends every call after a request's first, and the cross-check writer,
+# to a fast model; -oss sends every call there.
+fastargs=()
+fast_model=${BENCH_FAST_MODEL:-openai/gpt-oss-120b}
+if [[ $base == *-mix ]]; then
+  base=${base%-mix}
+  fastargs=(--fast-model "$fast_model")
+elif [[ $base == *-oss ]]; then
+  base=${base%-oss}
+  fastargs=(--fast-model "$fast_model" --fast-all)
+elif [[ $base == *-osshigh ]]; then
+  base=${base%-osshigh}
+  fastargs=(--fast-model "$fast_model" --fast-all --fast-effort high)
+elif [[ $base == *-mixhigh ]]; then
+  base=${base%-mixhigh}
+  fastargs=(--fast-model "$fast_model" --fast-effort high)
+fi
+
 start=$(date +%s)
 case $base in
 girdle | girdle-nojev | girdle-fast)
@@ -53,6 +72,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   [[ -n $fixed_effort ]] && extra+=(--no-route)
   [[ -n $race ]] && extra+=(--race "$race")
+  extra+=(${fastargs[@]+"${fastargs[@]}"})
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
     -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null

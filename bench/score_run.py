@@ -54,6 +54,9 @@ if agent.startswith("girdle"):
             result["cache_read_tokens"] = u.get("cache_read_tokens", 0)
             result["output_tokens"] = u.get("output_tokens", 0)
             result["jev_tokens"] = u.get("jev_tokens", 0)
+            result["fast_input_tokens"] = u.get("fast_input_tokens", 0)
+            result["fast_cache_read_tokens"] = u.get("fast_cache_read_tokens", 0)
+            result["fast_output_tokens"] = u.get("fast_output_tokens", 0)
             result["outcome"] = e.get("outcome", "")
             result["reason"] = e.get("reason", "")
 else:
@@ -77,12 +80,19 @@ check_text = (out / "check.txt").read_text(errors="replace") if (out / "check.tx
 result["invalid"] = (not result["pass"]) and "redeclared in this block" in check_text and "zz_hidden" in check_text
 
 # Both agents report input excluding cache reads. Muse Spark 1.3 Contributor
-# on OpenRouter: $0.10/M input, $0.002/M cache reads, $0.20/M output.
-# Jev: $0.042/M input.
+# on OpenRouter: $0.10/M input, $0.002/M cache reads, $0.20/M output. The
+# fast model's share (gpt-oss-120b on Groq, $0.15/M input, $0.60/M output)
+# is priced at its own rates, cache reads at the full input rate so as not
+# to flatter it. Jev: $0.042/M input.
+fast_in = result.get("fast_input_tokens", 0)
+fast_cache = result.get("fast_cache_read_tokens", 0)
+fast_out = result.get("fast_output_tokens", 0)
 result["cost_usd"] = round(
-    result["input_tokens"] * 0.10e-6
-    + result["cache_read_tokens"] * 0.002e-6
-    + result["output_tokens"] * 0.20e-6
+    (result["input_tokens"] - fast_in) * 0.10e-6
+    + (result["cache_read_tokens"] - fast_cache) * 0.002e-6
+    + (result["output_tokens"] - fast_out) * 0.20e-6
+    + (fast_in + fast_cache) * 0.15e-6
+    + fast_out * 0.60e-6
     + result.get("jev_tokens", 0) * 0.042e-6,
     5,
 )

@@ -58,6 +58,10 @@ func run() int {
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
 		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 1, or 3 with -fast)")
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
+		fastModel   = flag.String("fast-model", "", "OpenRouter model for every LLM call after a request's first, and the cross-check writer, for example openai/gpt-oss-120b")
+		fastProv    = flag.String("fast-provider", "groq,cerebras", "comma-separated OpenRouter providers to try, in order, for -fast-model")
+		fastAll     = flag.Bool("fast-all", false, "with -fast-model, use it for every LLM call")
+		fastEffort  = flag.String("fast-effort", "", "with -fast-model, the reasoning effort for its calls (default: the routed effort)")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
@@ -91,6 +95,13 @@ func run() int {
 	cfg.Speculate = cfg.Route && (*fast || *speculate)
 	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && (*fast || *crossCheck)
 	cfg.Heartbeat = !*noJev && (*fast || *heartbeat)
+	if *fastModel != "" {
+		if err := addFastModel(ctx, &cfg, *fastModel, *fastProv); err != nil {
+			return fail(err)
+		}
+		cfg.FastAll = *fastAll
+		cfg.FastEffort = checkpoint.Effort(*fastEffort)
+	}
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
 	cfg.Hedge = *hedge
 	if cfg.Hedge < 0 {
@@ -190,6 +201,34 @@ func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoi
 		StepPolicy:      checkpoint.DefaultStepPolicy,
 		Checkpoints:     checkpoints,
 	}, nil
+}
+
+// addFastModel adds a second model on OpenRouter, pinned to the given
+// providers in order, with fallbacks allowed.
+func addFastModel(ctx context.Context, cfg *kernel.Config, name, providers string) error {
+	key := os.Getenv("OPENROUTER_API_KEY")
+	provider, err := openrouter.New(openrouter.WithAPIKey(key))
+	if err != nil {
+		return err
+	}
+	model, err := provider.LanguageModel(ctx, name)
+	if err != nil {
+		return err
+	}
+	var order []string
+	for p := range strings.SplitSeq(providers, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			order = append(order, p)
+		}
+	}
+	cfg.FastModel, cfg.FastModelName = model, name
+	cfg.FastOptions = func(e checkpoint.Effort) fantasy.ProviderOptions {
+		return openrouter.NewProviderOptions(&openrouter.ProviderOptions{
+			Reasoning: &openrouter.ReasoningOptions{Effort: new(openrouter.ReasoningEffort(e))},
+			Provider:  &openrouter.Provider{Order: order, AllowFallbacks: new(true)},
+		})
+	}
+	return nil
 }
 
 func defaultLogPath() string {
