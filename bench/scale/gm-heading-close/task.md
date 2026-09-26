@@ -1,0 +1,1 @@
+Users report that an ATX heading whose closing sequence is a single `#` keeps it: `# Title #` renders as `<h1>Title #</h1>`. CommonMark drops a closing sequence of any length, so it should render `<h1>Title</h1>`. Longer closing sequences such as `## Title ##` already work. Find the cause and fix it. `go vet ./...` and `go test ./...` must pass.

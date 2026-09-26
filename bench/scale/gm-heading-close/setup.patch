@@ -1,0 +1,13 @@
+diff --git a/parser/atx_heading.go b/parser/atx_heading.go
+index 597b978..6737d97 100644
+--- a/parser/atx_heading.go
++++ b/parser/atx_heading.go
+@@ -108,7 +108,7 @@ func (b *atxHeadingParser) Open(_ ast.Node, reader text.Reader, pc Context) (ast
+ 			reader.AdvanceToEOL()
+ 			return node, NoChildren
+ 		}
+-		if i != stop-1 && util.IsSpace(line[i]) {
++		if i < stop-2 && util.IsSpace(line[i]) {
+ 			stop = i
+ 			stop -= util.TrimRightSpaceLength(line[0:stop])
+ 		}

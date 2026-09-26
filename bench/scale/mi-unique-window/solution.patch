@@ -1,0 +1,13 @@
+diff --git b/more_itertools/more.py a/more_itertools/more.py
+index c8565ae..f3200ba 100755
+--- b/more_itertools/more.py
++++ a/more_itertools/more.py
+@@ -4743,7 +4743,7 @@ def unique_in_window(iterable, n, key=None):
+ 
+     for item in iterable:
+         if len(window) == n:
+-            to_discard = window[-1]
++            to_discard = window[0]
+             if counts[to_discard] == 1:
+                 del counts[to_discard]
+             else:

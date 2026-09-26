@@ -1,0 +1,94 @@
+diff --git a/docs/api.rst b/docs/api.rst
+index 7b40a8e..d4d774d 100644
+--- a/docs/api.rst
++++ b/docs/api.rst
+@@ -167,6 +167,7 @@ These tools return summarized or aggregated data from an iterable.
+ .. autofunction:: all_unique
+ .. autofunction:: argmin
+ .. autofunction:: argmax
++.. autofunction:: argsort
+ .. function:: minmax(iterable, *[, key, default])
+ .. autofunction:: minmax(arg1, arg2, *args[, key])
+   :noindex:
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index f3200ba..a4c587c 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -67,6 +67,7 @@ __all__ = [
+     'always_reversible',
+     'argmax',
+     'argmin',
++    'argsort',
+     'bucket',
+     'callback_iter',
+     'chunked',
+@@ -5370,6 +5371,26 @@ def argmax(iterable, *, key=None):
+     return max(enumerate(iterable), key=itemgetter(1))[0]
+ 
+ 
++def argsort(iterable, *, key=None, reverse=False):
++    """Return the indices that would sort *iterable*.
++
++        >>> argsort([30, 10, 20])
++        [1, 2, 0]
++
++    Items that compare equal keep their original order, also when *reverse*
++    is true, just as with :func:`sorted`. *key* works as it does for
++    :func:`sorted`:
++
++        >>> argsort(['b', 'A', 'c'], key=str.lower)
++        [1, 0, 2]
++        >>> argsort([1, 3, 3, 2], reverse=True)
++        [1, 2, 3, 0]
++
++    """
++    values = list(iterable) if key is None else list(map(key, iterable))
++    return sorted(range(len(values)), key=values.__getitem__, reverse=reverse)
++
++
+ def _extract_monotonic(iterator, indices):
+     'Non-decreasing indices, lazily consumed'
+     num_read = 0
+diff --git a/more_itertools/more.pyi b/more_itertools/more.pyi
+index 927cb21..7216405 100644
+--- a/more_itertools/more.pyi
++++ b/more_itertools/more.pyi
+@@ -40,6 +40,7 @@ __all__ = [
+     'always_reversible',
+     'argmax',
+     'argmin',
++    'argsort',
+     'bucket',
+     'callback_iter',
+     'chunked',
+@@ -1022,3 +1023,9 @@ def synchronized(
+ def random_ordered_range(
+     *args: int,
+ ) -> Iterator[int]: ...
++def argsort(
++    iterable: Iterable[_T],
++    *,
++    key: Callable[[_T], Any] | None = ...,
++    reverse: bool = ...,
++) -> list[int]: ...
+diff --git a/tests/test_more.py b/tests/test_more.py
+index 50fab9c..d57aa76 100644
+--- a/tests/test_more.py
++++ b/tests/test_more.py
+@@ -7414,3 +7414,16 @@ class TestRandomOrderedRange(TestCase):
+         # Without mitigation the LCG doesn't produce many distinct permutations
+         perms = set(tuple(mi.random_ordered_range(6)) for _ in range(10**5))
+         self.assertEqual(len(perms), factorial(6))
++
++
++class ArgsortTests(TestCase):
++    def test_basic(self):
++        self.assertEqual(mi.argsort([30, 10, 20]), [1, 2, 0])
++        self.assertEqual(mi.argsort([]), [])
++
++    def test_stable(self):
++        self.assertEqual(mi.argsort([2, 1, 2, 1]), [1, 3, 0, 2])
++        self.assertEqual(mi.argsort([2, 1, 2, 1], reverse=True), [0, 2, 1, 3])
++
++    def test_key_and_iterator(self):
++        self.assertEqual(mi.argsort(iter('bAc'), key=str.lower), [1, 0, 2])

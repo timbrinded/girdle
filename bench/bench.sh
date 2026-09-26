@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Runs the benchmark: every task × agent × rep, in parallel, then summarises.
 #
-#   bench/bench.sh [-a "girdle pi"] [-t "go-rename py-config"] [-r 3] [-j 4] [-o outdir]
+#   bench/bench.sh [-a "girdle pi"] [-s scale] [-t "go-rename py-config"] [-r 3] [-j 4] [-o outdir]
+#
+# -s picks the task suite: tasks (small fixtures, the default) or scale
+# (real open-source repositories, fetched at a pinned commit).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 agents="girdle girdle-nojev pi"
@@ -9,9 +12,10 @@ tasks=$(cd "$root/bench/tasks" && printf '%s ' */ | tr -d /)
 reps=3
 jobs=4
 outroot=$root/bench/results/$(date +%Y%m%d-%H%M%S)
-while getopts "a:t:r:j:o:" opt; do
+while getopts "a:s:t:r:j:o:" opt; do
   case $opt in
   a) agents=$OPTARG ;;
+  s) tasks=$(cd "$root/bench/$OPTARG" && printf '%s ' */ | tr -d /) ;;
   t) tasks=$OPTARG ;;
   r) reps=$OPTARG ;;
   j) jobs=$OPTARG ;;

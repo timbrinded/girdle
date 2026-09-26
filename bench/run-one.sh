@@ -13,6 +13,7 @@ set -uo pipefail
 agent=$1 task=$2 rep=$3 outroot=$4
 root=$(cd "$(dirname "$0")/.." && pwd)
 tdir=$root/bench/tasks/$task
+[[ -d $tdir ]] || tdir=$root/bench/scale/$task
 model=${BENCH_MODEL:-meta/muse-spark-1.3-contributor}
 reasoning=${BENCH_REASONING:-medium}
 timeout_s=${BENCH_TIMEOUT:-600}
@@ -23,8 +24,7 @@ out=$outroot/$id
 mkdir -p "$out"
 
 work=$(mktemp -d)/repo
-cp -R "$tdir/repo" "$work"
-(cd "$work" && git init -q && git add -A && git -c user.email=bench@girdle -c user.name=bench commit -qm init)
+"$root/bench/prepare.sh" "$tdir" "$work"
 prompt=$(cat "$tdir/task.md")
 
 # An agent name ending in an effort (-none, -minimal, -low) runs at that
