@@ -16,7 +16,7 @@ bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it
 
 Useful flags: `-C dir`, `-model`, `-reasoning`, `-json` (headless events as JSON lines), `-no-checkpoints` (turn Jev off), `-log path`.
 
-`-fast` turns on the fast flow, which finishes most tasks in one LLM step. The repository's files go out with the request. One `apply` call makes every change and runs a check. Jev ends the run as soon as the check's result shows the task done. Each LLM call is raced three times, and the first call starts before routing finishes. Alongside the main call, a second call writes an independent test from the task's words, and Girdle runs it once the agent's own check passes. See decisions [0005](docs/decisions/0005-fast-flow.md) to [0009](docs/decisions/0009-cross-check.md), and [research/05](research/05-fast-flow-at-scale.md) for results.
+`-fast` turns on the fast flow, which finishes most tasks in one LLM step. The repository's files go out with the request. One `apply` call makes every change and runs a check. Jev ends the run as soon as the check's result shows the task done. Each LLM call is raced three times, and the first call starts before routing finishes. Alongside the main call, a second call writes an independent test from the task's words, and Girdle runs it once the agent's own check passes. In warm, daily-use conditions it is twice as fast as the default flow on both benchmark suites, at the same pass rate. See [research/06](research/06-optimisation-stage-summary.md) for the summary, and decisions [0005](docs/decisions/0005-fast-flow.md) to [0011](docs/decisions/0011-reproduce-compaction-warm-bench.md) for the detail.
 
 Every session writes an event log, including each Jev decision, to `~/.local/state/girdle/sessions/`.
 
@@ -30,6 +30,7 @@ bench/gate.sh                     # Segment 1 gate scenarios
 bench/bench.sh -r 3 -j 4          # full comparison: girdle, girdle-nojev, pi
 bench/bench.sh -a "girdle-fast girdle-fast-r1-low" -r 3   # fast flow; -r<N> sets racing, -low fixes the effort
 bench/bench.sh -s scale -a "girdle-fast girdle" -r 3       # six tasks on real repositories (goldmark, more-itertools)
+bench/bench.sh -w -a "girdle-fast girdle" -r 3             # warm: one reused, warmed directory per agent and task, as in daily use
 ```
 
 The scale suite's tasks name an upstream repository and commit in a `source` file. `bench/prepare.sh` clones each one once into `bench/.cache`, so their code is never vendored here.
