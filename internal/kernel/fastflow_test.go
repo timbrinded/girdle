@@ -48,9 +48,10 @@ func (scriptedModel) Stream(_ context.Context, call fantasy.Call) (fantasy.Strea
 	}, nil
 }
 
-// fakeJev answers every question favourably. Routing is slow, so the first
-// LLM call is always under way before the route arrives.
-func fakeJev(t *testing.T) *jev.Client {
+// fakeJev answers every question favourably, except as overrides say.
+// Routing is slow, so the first LLM call is always under way before the
+// route arrives.
+func fakeJev(t *testing.T, overrides ...map[string]float64) *jev.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -62,6 +63,12 @@ func fakeJev(t *testing.T) *jev.Client {
 		}
 		answers := map[string]jev.Answer{}
 		for k := range req.Questions {
+			if len(overrides) > 0 {
+				if v, ok := overrides[0][k]; ok {
+					answers[k] = jev.Answer{Type: "noul", Noul: v}
+					continue
+				}
+			}
 			switch k {
 			case "complexity":
 				time.Sleep(100 * time.Millisecond)
@@ -153,8 +160,18 @@ func (m crossModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.Stre
 }
 
 func TestCrossCheck(t *testing.T) {
-	for _, passes := range []bool{true, false} {
-		t.Run(map[bool]string{true: "passes", false: "fails"}[passes], func(t *testing.T) {
+	cases := []struct {
+		name        string
+		passes      bool
+		testAtFault float64
+	}{
+		{"passes", true, 0.1},
+		{"fails", false, 0.1},
+		{"fails through its own fault", false, 0.9},
+	}
+	for _, c := range cases {
+		passes := c.passes
+		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
 				t.Fatal(err)
@@ -162,7 +179,7 @@ func TestCrossCheck(t *testing.T) {
 			var mu sync.Mutex
 			var events []Event
 			s := NewSession(Config{
-				Model: crossModel{crossPasses: passes}, ModelName: "scripted", Jev: fakeJev(t), Dir: dir,
+				Model: crossModel{crossPasses: passes}, ModelName: "scripted", Jev: fakeJev(t, map[string]float64{"test_at_fault": c.testAtFault}), Dir: dir,
 				Policy: checkpoint.DefaultPolicy, Checkpoints: true,
 				Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
 				EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
@@ -191,6 +208,13 @@ func TestCrossCheck(t *testing.T) {
 			}
 			if passes {
 				if cross[0].Reason != "passed" || len(nudge) != 0 || outcome != OutcomeDone || reason != "done_early" {
+					t.Fatalf("cross %q, %d nudges, Run = %s %s", cross[0].Reason, len(nudge), outcome, reason)
+				}
+				return
+			}
+			if c.testAtFault > 0.5 {
+				// Jev dismissed it: the agent never hears of it.
+				if cross[0].Reason != "invalid" || len(nudge) != 0 || outcome != OutcomeDone || reason != "done_early" {
 					t.Fatalf("cross %q, %d nudges, Run = %s %s", cross[0].Reason, len(nudge), outcome, reason)
 				}
 				return

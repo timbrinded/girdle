@@ -13,6 +13,7 @@ import (
 	"charm.land/fantasy"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/race"
 	"github.com/timbrinded/girdle/internal/tools"
 )
 
@@ -31,7 +32,7 @@ const crossCheckMarker = "girdle_crosscheck"
 // isn't written yet before going on without it.
 const crossCheckWait = 15 * time.Second
 
-const crossCheckRole = `[Girdle] Another agent is doing the task above right now, and you won't see its code. Check its work independently. Write one small test file for the behaviour the task asks for, straight from the task's words: the cases it states, and the edge cases those words imply, such as empty input, one-pass iterators where it says iterable, equal items, boundaries and rounding. A wrong test costs the other agent time, so test only what the task clearly specifies, and compare each result with a literal expected value you worked out by hand, never with a value computed in the test. Use only the names the task and the existing code give, in the repository's own test framework and style. Make it a new file with girdle_crosscheck in its name, for example girdle_crosscheck_test.go beside the code, tests/test_girdle_crosscheck.py, or girdle_crosscheck.test.js. Send it in one apply call whose check runs only that file and never hides its exit code. If the task asks for nothing a test could check, send an apply with no changes.`
+const crossCheckRole = `[Girdle] Another agent is doing the task above right now, and you won't see its code. Check its work independently. Write one small test file for the behaviour the task asks for, straight from the task's words: the cases it states, and the edge cases those words imply, such as empty input, one-pass iterators where it says iterable, equal items, boundaries and rounding. A wrong test costs the other agent time, so test only what the task clearly specifies, and compare each result with a literal expected value you worked out by hand, never with a value computed in the test. Use only the names the task and the existing code give, in the repository's own test framework and style, with the same package name and import paths as the existing tests beside the code. Make it a new file with girdle_crosscheck in its name, for example girdle_crosscheck_test.go beside the code, tests/test_girdle_crosscheck.py, or girdle_crosscheck.test.js. Send it in one apply call whose check runs only that file and never hides its exit code. If the task asks for nothing a test could check, send an apply with no changes.`
 
 // crossCheck is a written cross-check, ready to run.
 type crossCheck struct {
@@ -65,7 +66,9 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 	if s.cfg.EffortOptions != nil {
 		opts = s.cfg.EffortOptions(checkpoint.EffortLow)
 	}
-	agent := fantasy.NewAgent(s.cfg.Model,
+	// The writer is raced: when the agent finishes quickly, the writer's
+	// slowest copies would otherwise hold the run up.
+	agent := fantasy.NewAgent(race.New(s.cfg.Model, 3, nil, s.noteRace),
 		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
 		fantasy.WithTools(record),
 		fantasy.WithProviderOptions(opts),
@@ -147,13 +150,27 @@ func (s *Session) runCrossCheck(ctx context.Context) string {
 		written = append(written, full)
 	}
 	out, code, ok := tools.RunCheck(ctx, s.cfg.Dir, cc.check)
-	passed := ok && code == 0
-	s.emit(Event{Type: EventCrossCheck, Reason: map[bool]string{true: "passed", false: "failed"}[passed],
-		Text: clipMiddle(out, 4000), Meta: map[string]string{"files": strings.Join(paths, ", "), "check": cc.check}})
-	if passed {
+	meta := map[string]string{"files": strings.Join(paths, ", "), "check": cc.check}
+	if ok && code == 0 {
+		s.emit(Event{Type: EventCrossCheck, Reason: "passed", Text: clipMiddle(out, 4000), Meta: meta})
 		s.steps = append(s.steps, "independent cross-check "+strings.Join(paths, ", ")+" -> passed")
 		return ""
 	}
+
+	// Jev screens the failure: a test that fails through its own fault
+	// would only cost the agent a step to dismiss.
+	var test strings.Builder
+	for _, p := range paths {
+		fmt.Fprintf(&test, "// %s\n%s\n", p, cc.files[p])
+	}
+	d := checkpoint.CrossCheck(ctx, s.cfg.Jev, checkpoint.CrossCheckState{Task: s.task, Test: clipMiddle(test.String(), 6000), Output: clipEnd(out, 3000)})
+	s.addUsage(Usage{JevTokens: d.InputTokens})
+	meta["jev_valid"] = fmt.Sprint(d.Valid)
+	if !d.Valid {
+		s.emit(Event{Type: EventCrossCheck, Reason: "invalid", Text: clipMiddle(out, 4000), Meta: meta})
+		return ""
+	}
+	s.emit(Event{Type: EventCrossCheck, Reason: "failed", Text: clipMiddle(out, 4000), Meta: meta})
 
 	var b strings.Builder
 	b.WriteString("[Girdle] An independent test, written from the task's words by another agent that couldn't see your code, fails against your change. It has been removed again. Decide whether the test or your code is wrong. If your code is wrong, fix it, add the failing case to your own tests, and apply again with your check. If the test is wrong, say why in one sentence.\n\n")

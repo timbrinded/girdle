@@ -108,6 +108,8 @@ type Session struct {
 	cross chan *crossCheck
 	// crossFeedback is a failed cross-check waiting to go to the LLM.
 	crossFeedback string
+	// task is the current request, as the user wrote it.
+	task string
 
 	// Facts about the current request, for the step-end checkpoint.
 	edited  map[string]bool // files changed by a successful edit or apply
@@ -178,6 +180,7 @@ func (s *Session) Seed(msgs []fantasy.Message) {
 // Run sends prompt and works until the task is done or the user is needed.
 func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	s.emit(Event{Type: EventUserMessage, Text: prompt})
+	s.task = prompt
 	s.resetFacts()
 	s.called.Store(false)
 	// Routing waits on Jev and the snapshot on the disk: do both at once.
