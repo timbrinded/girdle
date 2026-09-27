@@ -24,6 +24,9 @@ provider=${BENCH_PROVIDER:-openrouter}
 default_model=meta/muse-spark-1.3-contributor
 [[ $provider == zen ]] && default_model=longcat-2.5-preview-free
 model=${BENCH_MODEL:-$default_model}
+# BENCH_JEV picks where Girdle calls Jev. Zen's free jev-1.13-free answers
+# within the pinned model's own run-to-run noise (decision 0017).
+jev_via=${BENCH_JEV:-zen}
 reasoning=${BENCH_REASONING:-medium}
 # Hard tasks are long by design: they get 20 minutes unless BENCH_TIMEOUT says otherwise.
 default_timeout=600
@@ -65,7 +68,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
-    -provider "$provider" -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
+    -provider "$provider" -model "$model" -jev "$jev_via" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null
   agent_exit=$?
   ;;

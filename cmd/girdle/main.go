@@ -55,9 +55,9 @@ func run() int {
 	var (
 		prompt      = flag.String("p", "", "run this prompt headless and exit when done")
 		dir         = flag.String("C", ".", "working directory")
-		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (OPENCODE_API_KEY)")
+		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (ZEN_API_KEY)")
 		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "model ID at the provider (default "+defaultModel+", or "+zenDefaultModel+" with -provider zen)")
-		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (OPENCODE_API_KEY, "+zenJevModel+")")
+		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (ZEN_API_KEY, "+zenJevModel+")")
 		reasoning   = flag.String("reasoning", "medium", "reasoning effort: none, minimal, low, medium, high, xhigh")
 		logPath     = flag.String("log", "", "event log path (default: a new file under ~/.local/state/girdle/sessions)")
 		jsonOut     = flag.Bool("json", false, "headless: print events as JSON lines")
@@ -212,9 +212,9 @@ func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, j
 			})
 		}
 	case "zen":
-		key := os.Getenv("OPENCODE_API_KEY")
+		key := zenKey()
 		if key == "" {
-			return kernel.Config{}, errors.New("OPENCODE_API_KEY is not set: get a key at https://opencode.ai/auth")
+			return kernel.Config{}, errors.New("ZEN_API_KEY is not set: get a key at https://opencode.ai/auth")
 		}
 		provider, err = openaicompat.New(openaicompat.WithBaseURL(zenBaseURL), openaicompat.WithAPIKey(key),
 			openaicompat.WithResponsesAPIFunc(zenResponsesModel))
@@ -235,9 +235,9 @@ func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, j
 		case "typesafe":
 			jc, err = jev.NewFromEnv()
 		case "zen":
-			key := os.Getenv("OPENCODE_API_KEY")
+			key := zenKey()
 			if key == "" {
-				return kernel.Config{}, errors.New("-jev zen needs OPENCODE_API_KEY")
+				return kernel.Config{}, errors.New("-jev zen needs ZEN_API_KEY")
 			}
 			jc = jev.New(zenJevURL, zenJevModel, key)
 		default:
@@ -260,6 +260,9 @@ func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, j
 		Checkpoints:     checkpoints,
 	}, nil
 }
+
+// zenKey is the OpenCode Zen API key, from ZEN_API_KEY or OPENCODE_API_KEY.
+func zenKey() string { return cmp.Or(os.Getenv("ZEN_API_KEY"), os.Getenv("OPENCODE_API_KEY")) }
 
 // zenResponsesModel reports whether Zen serves a model through the
 // Responses API rather than chat completions: its Muse Spark models.

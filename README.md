@@ -14,7 +14,7 @@ bin/girdle                          # TUI in the current directory
 bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it needs you (2)
 ```
 
-Useful flags: `-C dir`, `-model`, `-reasoning`, `-json` (headless events as JSON lines), `-no-checkpoints` (turn Jev off), `-log path`. `-provider zen` uses [OpenCode Zen](https://opencode.ai/docs/zen) with `OPENCODE_API_KEY`, defaulting to its free LongCat 2.5 Preview, and `-jev zen` calls Zen's free Jev ([decision 0017](docs/decisions/0017-opencode-zen.md)).
+Useful flags: `-C dir`, `-model`, `-reasoning`, `-json` (headless events as JSON lines), `-no-checkpoints` (turn Jev off), `-log path`. `-jev zen` calls [OpenCode Zen](https://opencode.ai/docs/zen)'s free Jev with `ZEN_API_KEY`. It matches the pinned model within its own noise. Zen's free LLMs only work inside OpenCode, so `-provider zen` is only useful for its paid models ([decision 0017](docs/decisions/0017-opencode-zen.md)).
 
 Every shell command passes a tripwire first. ast-grep parses the command, and code blocks what can never be allowed: recursive deletes outside the project, force-pushes to a shared branch, and secrets sent off the machine. Commands that delete, push and send nothing run at once. Jev judges the rest. A blocked command hands the run back to you. `-tripwire=false` turns it off. See [decision 0014](docs/decisions/0014-ast-grep-with-jev.md).
 

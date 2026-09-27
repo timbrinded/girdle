@@ -160,6 +160,9 @@ func (c *Client) do(ctx context.Context, body []byte) (*Response, time.Duration,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	// Some gateways (OpenCode Zen, behind Cloudflare) refuse unidentified
+	// clients, including Go's default user agent.
+	req.Header.Set("User-Agent", "girdle")
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("jev: %w", err)
