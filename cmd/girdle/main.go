@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"charm.land/fantasy/providers/openai"
+	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
@@ -25,6 +28,16 @@ import (
 )
 
 const defaultModel = "meta/muse-spark-1.3-contributor"
+
+// OpenCode Zen serves some models free for a time: LongCat 2.5 Preview
+// (zero data retention), Muse Spark 1.3 Contributor (trains on prompts)
+// and Jev 1.13. See https://opencode.ai/docs/zen.
+const (
+	zenBaseURL      = "https://opencode.ai/zen/v1"
+	zenDefaultModel = "longcat-2.5-preview-free"
+	zenJevURL       = "https://opencode.ai/zen"
+	zenJevModel     = "jev-1.13-free"
+)
 
 // Exit codes for headless runs.
 const (
@@ -42,7 +55,9 @@ func run() int {
 	var (
 		prompt      = flag.String("p", "", "run this prompt headless and exit when done")
 		dir         = flag.String("C", ".", "working directory")
-		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "OpenRouter model ID")
+		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (OPENCODE_API_KEY)")
+		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "model ID at the provider (default "+defaultModel+", or "+zenDefaultModel+" with -provider zen)")
+		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (OPENCODE_API_KEY, "+zenJevModel+")")
 		reasoning   = flag.String("reasoning", "medium", "reasoning effort: none, minimal, low, medium, high, xhigh")
 		logPath     = flag.String("log", "", "event log path (default: a new file under ~/.local/state/girdle/sessions)")
 		jsonOut     = flag.Bool("json", false, "headless: print events as JSON lines")
@@ -83,7 +98,10 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	cfg, err := buildConfig(ctx, workDir, *model, *reasoning, !*noJev)
+	if *provider == "zen" && !explicit["model"] && os.Getenv("GIRDLE_MODEL") == "" {
+		*model = zenDefaultModel
+	}
+	cfg, err := buildConfig(ctx, workDir, *provider, *model, *reasoning, *jevVia, !*noJev)
 	if err != nil {
 		return fail(err)
 	}
@@ -177,12 +195,33 @@ func run() int {
 	}
 }
 
-func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoints bool) (kernel.Config, error) {
-	key := os.Getenv("OPENROUTER_API_KEY")
-	if key == "" {
-		return kernel.Config{}, errors.New("OPENROUTER_API_KEY is not set")
+func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, jevVia string, checkpoints bool) (kernel.Config, error) {
+	var provider fantasy.Provider
+	var effort func(checkpoint.Effort) fantasy.ProviderOptions
+	var err error
+	switch providerName {
+	case "openrouter":
+		key := os.Getenv("OPENROUTER_API_KEY")
+		if key == "" {
+			return kernel.Config{}, errors.New("OPENROUTER_API_KEY is not set")
+		}
+		provider, err = openrouter.New(openrouter.WithAPIKey(key))
+		effort = func(e checkpoint.Effort) fantasy.ProviderOptions {
+			return openrouter.NewProviderOptions(&openrouter.ProviderOptions{
+				Reasoning: &openrouter.ReasoningOptions{Effort: new(openrouter.ReasoningEffort(e))},
+			})
+		}
+	case "zen":
+		key := os.Getenv("OPENCODE_API_KEY")
+		if key == "" {
+			return kernel.Config{}, errors.New("OPENCODE_API_KEY is not set: get a key at https://opencode.ai/auth")
+		}
+		provider, err = openaicompat.New(openaicompat.WithBaseURL(zenBaseURL), openaicompat.WithAPIKey(key),
+			openaicompat.WithResponsesAPIFunc(zenResponsesModel))
+		effort = zenEffort
+	default:
+		return kernel.Config{}, fmt.Errorf("unknown provider %q: use openrouter or zen", providerName)
 	}
-	provider, err := openrouter.New(openrouter.WithAPIKey(key))
 	if err != nil {
 		return kernel.Config{}, err
 	}
@@ -192,14 +231,21 @@ func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoi
 	}
 	var jc *jev.Client
 	if checkpoints {
-		if jc, err = jev.NewFromEnv(); err != nil {
+		switch jevVia {
+		case "typesafe":
+			jc, err = jev.NewFromEnv()
+		case "zen":
+			key := os.Getenv("OPENCODE_API_KEY")
+			if key == "" {
+				return kernel.Config{}, errors.New("-jev zen needs OPENCODE_API_KEY")
+			}
+			jc = jev.New(zenJevURL, zenJevModel, key)
+		default:
+			err = fmt.Errorf("unknown -jev %q: use typesafe or zen", jevVia)
+		}
+		if err != nil {
 			return kernel.Config{}, err
 		}
-	}
-	effort := func(e checkpoint.Effort) fantasy.ProviderOptions {
-		return openrouter.NewProviderOptions(&openrouter.ProviderOptions{
-			Reasoning: &openrouter.ReasoningOptions{Effort: new(openrouter.ReasoningEffort(e))},
-		})
 	}
 	return kernel.Config{
 		Model:           model,
@@ -213,6 +259,19 @@ func buildConfig(ctx context.Context, dir, modelName, reasoning string, checkpoi
 		StepPolicy:      checkpoint.DefaultStepPolicy,
 		Checkpoints:     checkpoints,
 	}, nil
+}
+
+// zenResponsesModel reports whether Zen serves a model through the
+// Responses API rather than chat completions: its Muse Spark models.
+func zenResponsesModel(id string) bool { return strings.HasPrefix(id, "muse-") }
+
+// zenEffort sets the reasoning effort for either API: each model reads the
+// options for its own.
+func zenEffort(e checkpoint.Effort) fantasy.ProviderOptions {
+	re := openai.ReasoningEffort(e)
+	opts := openaicompat.NewProviderOptions(&openaicompat.ProviderOptions{ReasoningEffort: &re})
+	maps.Copy(opts, openai.NewResponsesProviderOptions(&openai.ResponsesProviderOptions{ReasoningEffort: &re}))
+	return opts
 }
 
 func defaultLogPath() string {

@@ -31,7 +31,7 @@ while getopts "a:s:t:r:j:o:w" opt; do
 done
 
 # Keys live in the interactive shell profile; load them without printing.
-for k in OPENROUTER_API_KEY TYPESAFE_API_KEY; do
+for k in OPENROUTER_API_KEY TYPESAFE_API_KEY OPENCODE_API_KEY; do
   if [[ -z ${!k:-} ]]; then
     v=$(zsh -ic "printf %s \"\$$k\"" 2>/dev/null)
     export "$k=$v"

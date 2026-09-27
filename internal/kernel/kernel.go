@@ -771,7 +771,9 @@ Every response you send costs the user several seconds, so finish in as few as y
 		if cfg.Reproduce {
 			b.WriteString(` Set reproduce to a command that runs only that test: Girdle runs it once without your fix to show it fails there.`)
 		}
-		b.WriteString(` Before you write, work out the edge cases the task's words imply, such as empty input, a one-pass iterator wherever it says iterable, equal items, and the smallest and largest sizes, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
+		// This once listed examples taken from a benchmark task's hidden
+		// test. They were removed at no cost (decision 0016).
+		b.WriteString(` Before you write, work out the edge cases the task's words imply, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
 - Fix: if the check fails, send one more apply with the fixes. Start its check with a quick run of just what failed, joined to the full proof with &&, so a repeat failure shows in seconds.
 The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". Keep any text to a sentence.
 

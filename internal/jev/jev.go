@@ -82,6 +82,12 @@ type Client struct {
 // ErrNoAPIKey is returned when TYPESAFE_API_KEY is not set.
 var ErrNoAPIKey = errors.New("jev: TYPESAFE_API_KEY is not set")
 
+// New returns a client for a System One endpoint at baseURL, such as
+// OpenCode Zen's, which serves Jev under other model names.
+func New(baseURL, model, key string) *Client {
+	return &Client{BaseURL: baseURL, Model: model, APIKey: key, HTTP: &http.Client{Timeout: 20 * time.Second}, MaxRetries: 3}
+}
+
 // NewFromEnv builds a client from TYPESAFE_API_KEY and optional
 // GIRDLE_JEV_MODEL and GIRDLE_JEV_URL overrides.
 func NewFromEnv() (*Client, error) {

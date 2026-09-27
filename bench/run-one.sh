@@ -17,11 +17,17 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tdir=$root/bench/tasks/$task
 [[ -d $tdir ]] || tdir=$root/bench/scale/$task
 [[ -d $tdir ]] || tdir=$root/bench/hard/$task
-model=${BENCH_MODEL:-meta/muse-spark-1.3-contributor}
+[[ -d $tdir ]] || tdir=$root/bench/holdout/$task
+# BENCH_PROVIDER picks Girdle's provider: openrouter (default) or zen,
+# OpenCode Zen. BENCH_MODEL defaults to that provider's default model.
+provider=${BENCH_PROVIDER:-openrouter}
+default_model=meta/muse-spark-1.3-contributor
+[[ $provider == zen ]] && default_model=longcat-2.5-preview-free
+model=${BENCH_MODEL:-$default_model}
 reasoning=${BENCH_REASONING:-medium}
 # Hard tasks are long by design: they get 20 minutes unless BENCH_TIMEOUT says otherwise.
 default_timeout=600
-[[ $tdir == */bench/hard/* ]] && default_timeout=1200
+[[ $tdir == */bench/hard/* || $tdir == */bench/holdout/* ]] && default_timeout=1200
 timeout_s=${BENCH_TIMEOUT:-$default_timeout}
 mkdir -p "$outroot"
 outroot=$(cd "$outroot" && pwd)
@@ -59,7 +65,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
-    -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
+    -provider "$provider" -model "$model" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null
   agent_exit=$?
   ;;

@@ -12,6 +12,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tdir=$root/bench/tasks/$task
 [[ -d $tdir ]] || tdir=$root/bench/scale/$task
 [[ -d $tdir ]] || tdir=$root/bench/hard/$task
+[[ -d $tdir ]] || tdir=$root/bench/holdout/$task
 warm=$root/bench/.warm/$agent/$task
 if [[ ! -d $warm/repo/.git ]]; then
   rm -rf "$warm"
