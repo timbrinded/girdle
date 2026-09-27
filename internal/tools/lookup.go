@@ -60,8 +60,20 @@ func (t toolset) lookup(ctx context.Context, in LookupInput, call fantasy.ToolCa
 	}
 	for _, pattern := range in.Searches {
 		out, err := Search(ctx, t.dir, pattern, "", "", false)
-		if err != nil {
+		switch {
+		case err != nil:
 			out = err.Error()
+		case t.grepCtx:
+			// A search that finds nothing costs a step to retry; the
+			// commonest near miss is the case of a name.
+			if strings.HasPrefix(out, "no matches") {
+				if alt, err := Search(ctx, t.dir, pattern, "", "", true); err == nil && !strings.HasPrefix(alt, "no matches") {
+					out = "no matches with this case; these match ignoring case:\n" + alt
+				}
+			}
+			if note := t.aroundMatches(out); note != "" {
+				out += "\n\n" + note
+			}
 		}
 		section("search "+pattern, out)
 	}

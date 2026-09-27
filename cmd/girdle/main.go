@@ -66,7 +66,7 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
-		fast        = flag.Bool("fast", false, "fast flow: -snapshot -prefetch -batch -early-stop -stepfan -leftovers -speculate -crosscheck -reproduce -heartbeat, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
+		fast        = flag.Bool("fast", false, "fast flow: -snapshot -prefetch -batch -early-stop -stepfan -leftovers -speculate -crosscheck -reproduce -heartbeat -grepctx, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
 		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
 		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
@@ -76,6 +76,7 @@ func run() int {
 		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
+		grepCtx     = flag.Bool("grepctx", false, "add to search results the definitions the matches are in, and show them when there are few")
 		denyRead    []*regexp.Regexp
 		offline     = flag.Bool("offline-tools", false, "run shell commands without outside network access (macOS), as the benchmark does so an agent can't fetch the fix it is tested on")
 		tripwire    = flag.Bool("tripwire", true, "check every shell command first and block ones that delete outside the project, force-push a shared branch, or send secrets off the machine")
@@ -139,6 +140,7 @@ func run() int {
 	cfg.Tripwire = *tripwire
 	cfg.OfflineTools = *offline
 	cfg.DenyRead = denyRead
+	cfg.GrepContext = withFast("grepctx", *grepCtx)
 	cfg.Leftovers = !*noJev && withFast("leftovers", *leftovers)
 	cfg.TripwirePolicy = checkpoint.DefaultTripwirePolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy

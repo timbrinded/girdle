@@ -115,6 +115,9 @@ type Config struct {
 	// working directory, such as other copies of a benchmark's code under
 	// test.
 	DenyRead []*regexp.Regexp
+	// GrepContext adds to search results the definitions the matches are
+	// in, and shows them when there are few.
+	GrepContext bool
 }
 
 // Session is one conversation in one working directory.
@@ -207,6 +210,7 @@ func NewSession(cfg Config) *Session {
 		"reproduce":   fmt.Sprint(cfg.Reproduce),
 		"tripwire":    fmt.Sprint(cfg.Tripwire),
 		"leftovers":   fmt.Sprint(cfg.Leftovers),
+		"grepctx":     fmt.Sprint(cfg.GrepContext),
 	}})
 	return s
 }
@@ -882,7 +886,7 @@ func renderChange(c tools.Change) string {
 // toolOptions are how the session's tools run shell commands: through the
 // tripwire when it's on, and offline when the config says so.
 func (s *Session) toolOptions() tools.Options {
-	o := tools.Options{Offline: s.cfg.OfflineTools, DenyRead: s.cfg.DenyRead}
+	o := tools.Options{Offline: s.cfg.OfflineTools, DenyRead: s.cfg.DenyRead, GrepContext: s.cfg.GrepContext}
 	if s.cfg.Tripwire {
 		o.Guard = s.guard
 	}

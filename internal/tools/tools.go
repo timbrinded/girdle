@@ -47,6 +47,9 @@ type Options struct {
 	// Keep them simple (anchors, escapes, bracket sets): shell commands get
 	// them from macOS's sandbox-exec, whose regex dialect is POSIX's.
 	DenyRead []*regexp.Regexp
+	// GrepContext adds to search results the definitions the matches are
+	// in, and shows them when there are few.
+	GrepContext bool
 }
 
 // offlineProfile is the macOS sandbox profile for offline commands.
@@ -122,10 +125,12 @@ type toolset struct {
 	offline bool
 	// denyRead matches the paths the tools may not read outside dir.
 	denyRead []*regexp.Regexp
+	// grepCtx: see Options.GrepContext.
+	grepCtx bool
 }
 
 func newToolset(dir string, opts Options) toolset {
-	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline, denyRead: opts.DenyRead}
+	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline, denyRead: opts.DenyRead, grepCtx: opts.GrepContext}
 }
 
 func (t toolset) path(p string) string {
@@ -243,6 +248,11 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	r := t.shell(ctx, in.Command, timeout)
 	if r.refused {
 		return fantasy.NewTextErrorResponse(r.text()), nil
+	}
+	if t.grepCtx && r.code == 0 && grepCommand.MatchString(in.Command) {
+		if note := t.aroundMatches(r.out); note != "" {
+			r.out = strings.TrimRight(r.out, "\n") + "\n\n" + note
+		}
 	}
 	return fantasy.NewTextResponse(r.text()), nil
 }
