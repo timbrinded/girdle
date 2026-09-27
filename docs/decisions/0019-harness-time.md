@@ -107,6 +107,32 @@ Ratios are the candidate's time over the fast flow's, over passing runs, with 95
 - **Skipping data files is kept.** It is a fact about critical-path time, not a noisy effect. On the toml tasks, the snapshot is ready after 0.5 s instead of 4.1 s, and Jev tokens per run fall from about 261k to 29k. Repositories with fewer than 128 candidate files are unchanged by construction.
 - **`-structure` is removed** after failing on both suites, along with ast-grep's `Units` and `Referenced`, which only it used.
 
+## Round 3: show the code instead of letting the agent look for it (`-wide`)
+
+- **Why.** Reading before the first edit costs 45 s a run, and Space Bunny has a 1M-token context. Measured directly, a cached prompt barely slows a step: 81k cached tokens took 3.8 s, 12k took 4.1 s. So `-wide` filled a large repository's snapshot with up to 320 KB of whole code files, in the order Jev's prefetch ranks them.
+- **What the snapshots held.** 200 to 330 KB covering what these tasks touch: expr's lexer, parser, compiler and checker, and toml's parser and decoder.
+- **Result.** 3 runs per task, side by side:
+
+  | | Fast flow | `-wide` |
+  |---|---|---|
+  | Time ratio (passing runs) | | 1.02 (0.88 to 1.19) |
+  | Passed | 28 of 33 | 29 of 33 |
+  | Tool calls per passing run | 15.7 | 12.3 |
+  | Output tokens per passing run | 23.8k | 26.9k |
+
+  - Fresh input rose fivefold: the first call's 76k tokens are raced three ways.
+- **Cut.** The agent took 22% fewer steps, but thought longer in each, and time didn't move.
+
+## What the rounds show
+
+- **Tools are only 11% of a passing run.** LLM steps are 86%, over rounds 2 and 3. The earlier profile's 41% for tools came from hang tails and benchmark load.
+- **Space Bunny's output per passing run held at about 20k to 27k tokens whatever the harness did to its context.**
+  - More code shown up front (`-wide`) meant fewer steps and more thinking in each.
+  - Pruned context (`-compact`), structural context (`-structure`) and a plan-once prompt (`-planonce`) didn't move output either.
+  - Its thinking per task looks roughly fixed. Step time follows output tokens.
+  - That leaves time to the model, to the provider's speed, or to spending on copies (racing). None of those is a harness design lever.
+- **The kept change, prefetch skipping data files, is confirmed on the held-out set:** results to follow.
+
 ## Ideas measured and dropped before a live round
 
 | Idea | Why dropped |

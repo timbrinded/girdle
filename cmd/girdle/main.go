@@ -75,7 +75,6 @@ func run() int {
 		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
-		wide        = flag.Bool("wide", false, "for a repository too large to snapshot whole, fill the snapshot with about 320 KB of whole code files, in the order Jev ranks them")
 		denyRead    []string
 		offline     = flag.Bool("offline-tools", false, "run shell commands without outside network access (macOS), as the benchmark does so an agent can't fetch the fix it is tested on")
 		tripwire    = flag.Bool("tripwire", true, "check every shell command first and block ones that delete outside the project, force-push a shared branch, or send secrets off the machine")
@@ -138,7 +137,6 @@ func run() int {
 	cfg.Tripwire = *tripwire
 	cfg.OfflineTools = *offline
 	cfg.DenyRead = denyRead
-	cfg.Wide = cfg.Prefetch && *wide
 	cfg.Leftovers = !*noJev && withFast("leftovers", *leftovers)
 	cfg.TripwirePolicy = checkpoint.DefaultTripwirePolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy

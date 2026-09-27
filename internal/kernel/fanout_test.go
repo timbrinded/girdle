@@ -96,39 +96,6 @@ func TestPrefetchAddsPickedFiles(t *testing.T) {
 	}
 }
 
-func TestWideSnapshotFillsItsBudgetInJevsOrder(t *testing.T) {
-	dir := t.TempDir()
-	files := map[string]string{"a.go": "package p\n\nfunc Foo() {}\n"}
-	scores := map[string]float64{}
-	for i := range 12 {
-		p := fmt.Sprintf("f%02d.go", i)
-		files[p] = "package p\n\nfunc F" + fmt.Sprint(i) + "() {}\n" + strings.Repeat("// line of code\n", 400)
-		scores[p] = 0.9 - float64(i)*0.05 // f00 first; f11 scores 0.35
-	}
-	files["big.go"] = "package p\n\nfunc Big() {}\n" + strings.Repeat("// line of code\n", 2000) // 32 KB
-	scores["big.go"] = 0.95
-	files["low.go"] = "package p\n\nfunc Low() {}\n"
-	scores["low.go"] = 0.1
-	writeFiles(t, dir, files)
-	pick := func(context.Context, string, []checkpoint.FileOutline) checkpoint.Prefetch {
-		return checkpoint.Prefetch{Scores: scores}
-	}
-	narrow := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
-	if len(narrow.Prefetched) > prefetchMax || slices.Contains(narrow.Prefetched, "big.go") {
-		t.Fatalf("a normal snapshot prefetched %v", narrow.Prefetched)
-	}
-	wide := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick, Wide: 64 << 10})
-	if len(wide.Prefetched) == 0 || wide.Prefetched[0] != "big.go" {
-		t.Fatalf("a wide snapshot didn't start with the best file, 32 KB as it is: %v", wide.Prefetched)
-	}
-	if slices.Contains(wide.Prefetched, "low.go") || wide.Bytes > 64<<10 {
-		t.Fatalf("a wide snapshot went past its floor or its budget: %v, %d bytes", wide.Prefetched, wide.Bytes)
-	}
-	if len(wide.Prefetched) <= len(narrow.Prefetched) {
-		t.Fatalf("wide prefetched %d files, narrow %d", len(wide.Prefetched), len(narrow.Prefetched))
-	}
-}
-
 func TestPrefetchSkipsDataInABigRepository(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

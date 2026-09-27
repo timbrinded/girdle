@@ -38,10 +38,6 @@ type Snapshot struct {
 type SnapshotOptions struct {
 	// Pick judges which other files the request needs.
 	Pick Picker
-	// Wide, when set, is how much code, in bytes, a large repository's
-	// snapshot may show. Prefetch then fills it with whole files in the
-	// order Jev ranks them, rather than adding its few likeliest.
-	Wide int
 }
 
 // Picker judges how likely a request is to need each file.
@@ -75,7 +71,7 @@ func TakeSnapshot(ctx context.Context, dir string, budget int, request string) S
 func TakeSnapshotWith(ctx context.Context, dir string, budget int, request string, opts SnapshotOptions) Snapshot {
 	paths := listFiles(ctx, dir)
 	if total := textBytes(dir, paths); total > budget {
-		return namedCodeSnapshot(ctx, dir, paths, total, cmp.Or(opts.Wide, budget/2), request, opts)
+		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, opts)
 	}
 	var snap Snapshot
 	snap.Files = len(paths)
@@ -255,7 +251,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 			// the model reads it first anyway.
 			if !slices.Contains(shown, d.Path) {
 				data, err := os.ReadFile(filepath.Join(dir, d.Path))
-				if err == nil && len(data) <= opts.fileMax() && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", d.Path, strings.TrimRight(string(data), "\n"))) {
+				if err == nil && len(data) <= wholeFileMax && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", d.Path, strings.TrimRight(string(data), "\n"))) {
 					snap.Included++
 					shown = append(shown, d.Path)
 				} else {
@@ -353,22 +349,10 @@ const (
 	// were mostly noise, such as a changelog (decision 0013).
 	prefetchMax = 6
 	prefetchMin = 0.7
-	// wideMin is the least need a file must score to fill a wide snapshot,
-	// and wideFileMax the largest file it shows whole.
-	wideMin     = 0.3
-	wideFileMax = 64 << 10
 	// outlineMax clips what Jev sees of each file: a generated file's
 	// outline can otherwise exceed its context.
 	outlineMax = 6000
 )
-
-// fileMax is the largest file the snapshot shows whole.
-func (o SnapshotOptions) fileMax() int {
-	if o.Wide > 0 {
-		return wideFileMax
-	}
-	return wholeFileMax
-}
 
 // prefetchJudgeable is about how many files Jev can judge well within
 // prefetchWait.
@@ -420,7 +404,7 @@ func prefetch(ctx context.Context, dir string, paths, shown []string, request st
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, p))
-		if err != nil || len(b) > opts.fileMax() || isBinary(b) {
+		if err != nil || len(b) > wholeFileMax || isBinary(b) {
 			continue
 		}
 		data[p] = b
@@ -446,10 +430,8 @@ func prefetch(ctx context.Context, dir string, paths, shown []string, request st
 		return cmp.Or(cmp.Compare(snap.Prefetch.Scores[b], snap.Prefetch.Scores[a]), cmp.Compare(a, b))
 	})
 	for _, p := range ranked {
-		switch score := snap.Prefetch.Scores[p]; {
-		case opts.Wide > 0 && score < wideMin,
-			opts.Wide == 0 && (len(snap.Prefetched) == prefetchMax || score < prefetchMin):
-			return
+		if len(snap.Prefetched) == prefetchMax || snap.Prefetch.Scores[p] < prefetchMin {
+			break
 		}
 		b, ok := data[p]
 		if !ok {

@@ -110,11 +110,6 @@ type Config struct {
 	// OfflineTools runs shell commands without outside network access
 	// (macOS only), so a benchmark agent can't fetch the fix it's tested on.
 	OfflineTools bool
-	// Wide fills a large repository's snapshot with up to WideBudget bytes
-	// of whole code files, ranked by Jev, so the LLM reads less before it
-	// writes. It needs Prefetch.
-	Wide       bool
-	WideBudget int
 	// DenyRead lists path prefixes the tools may not read outside the
 	// working directory, such as other copies of a benchmark's code under
 	// test.
@@ -211,7 +206,6 @@ func NewSession(cfg Config) *Session {
 		"reproduce":   fmt.Sprint(cfg.Reproduce),
 		"tripwire":    fmt.Sprint(cfg.Tripwire),
 		"leftovers":   fmt.Sprint(cfg.Leftovers),
-		"wide":        fmt.Sprint(cfg.Wide),
 	}})
 	return s
 }
@@ -266,7 +260,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		}
 		wg.Go(func() {
 			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt,
-				SnapshotOptions{Pick: pick, Wide: s.wideBudget()})
+				SnapshotOptions{Pick: pick})
 		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
@@ -882,17 +876,6 @@ func renderChange(c tools.Change) string {
 			"\n+ " + strings.ReplaceAll(clipMiddle(c.NewText, 1500), "\n", "\n+ ")
 	}
 	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
-}
-
-// DefaultWideBudget is a wide snapshot's code budget: about 90k tokens,
-// which Space Bunny reads from its prompt cache at little cost per step.
-const DefaultWideBudget = 320 << 10
-
-func (s *Session) wideBudget() int {
-	if !s.cfg.Wide {
-		return 0
-	}
-	return cmp.Or(s.cfg.WideBudget, DefaultWideBudget)
 }
 
 // toolOptions are how the session's tools run shell commands: through the

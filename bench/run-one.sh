@@ -8,7 +8,9 @@
 # pi (vanilla Pi, run in tmux). A Girdle agent can carry Girdle flags after
 # a +, which is how an idea or an ablation is tested:
 # girdle-fast+reproduce=false runs -fast -reproduce=false, and
-# girdle-fast+race=5+hedge=2s runs -fast -race=5 -hedge=2s.
+# girdle-fast+race=5+hedge=2s runs -fast -race=5 -hedge=2s. An @label picks
+# another build, bin/girdle-<label>, to compare two builds side by side:
+# girdle-fast@base runs bin/girdle-base -fast.
 # Expects OPENROUTER_API_KEY and TYPESAFE_API_KEY in the environment.
 set -uo pipefail
 
@@ -44,6 +46,11 @@ out=$outroot/$id
 mkdir -p "$out"
 
 base=${agent%%+*}
+bin=$root/bin/girdle
+if [[ $base == *@* ]]; then
+  bin=$root/bin/girdle-${base#*@}
+  base=${base%@*}
+fi
 flags=()
 if [[ $agent == *+* ]]; then
   IFS=+ read -ra parts <<<"${agent#*+}"
@@ -96,7 +103,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ $base == girdle-nojev ]] && extra+=(--no-checkpoints)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})
-  timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
+  timeout "$timeout_s" "$bin" -C "$work" -p "$prompt" -json \
     -provider "$provider" -model "$model" -jev "$jev_via" -reasoning "$reasoning" -offline-tools -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null
   agent_exit=$?
