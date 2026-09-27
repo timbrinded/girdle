@@ -24,9 +24,14 @@ func TestTripwirePolicy(t *testing.T) {
 		{"damage alone is only logged", 0.1, 0.45, 0.1, "allow"},
 		{"the user asked for it", 0.95, 0.9, 0.9, "allow"},
 	} {
-		if got, _, _ := p.Decide(answers(tc.deletes, tc.damages, tc.authorised)); got != tc.want {
+		if got, _, _ := p.Decide(answers(tc.deletes, tc.damages, tc.authorised), false); got != tc.want {
 			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
 		}
+	}
+	// A delete that code resolved to a temp directory isn't blocked on
+	// Jev's reading of "outside the project".
+	if got, _, _ := p.Decide(answers(0.92, 0.54, 0.42), true); got != "allow" {
+		t.Errorf("resolved temp delete: %s, want allow", got)
 	}
 }
 

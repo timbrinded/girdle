@@ -109,7 +109,7 @@ func ReadShell(ctx context.Context, line, project, home string) (ShellFacts, err
 		return f, err
 	}
 	f.Commands = cmds
-	temps := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+	temps := TempDirs()
 	inside := func(p string) bool { return p == project || strings.HasPrefix(p, project+"/") }
 	inTemp := func(p string) bool {
 		for _, t := range temps {
@@ -267,6 +267,12 @@ func ReadShell(ctx context.Context, line, project, home string) (ShellFacts, err
 		}
 	}
 	return f, nil
+}
+
+// TempDirs are the system's temporary directories: deleting inside them
+// isn't deleting the user's files.
+func TempDirs() []string {
+	return []string{filepath.Clean(os.TempDir()), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
 }
 
 // Floor is the hard floor under the tripwire: what is never run, whatever

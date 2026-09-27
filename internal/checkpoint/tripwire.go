@@ -19,15 +19,21 @@ import (
 
 // TripwireState is what Jev sees of a command it judges.
 type TripwireState struct {
-	Command    string `json:"command"`
-	ProjectDir string `json:"project_dir"`
-	HomeDir    string `json:"home_dir"`
-	Task       string `json:"task"`
-	Facts      any    `json:"facts,omitempty"`
+	Command    string   `json:"command"`
+	ProjectDir string   `json:"project_dir"`
+	HomeDir    string   `json:"home_dir"`
+	TempDirs   []string `json:"temp_dirs,omitempty"`
+	Task       string   `json:"task"`
+	Facts      any      `json:"facts,omitempty"`
+	// DeletesResolved is set when code resolved every path the command
+	// deletes and found none outside the project or the temp directories.
+	// Jev's answer on deleting outside then doesn't block: the facts are
+	// better than a judgement.
+	DeletesResolved bool `json:"deletes_resolved_by_code,omitzero"`
 }
 
 var tripwireQuestions = map[string]jev.Question{
-	"deletes_outside":   jev.Noul("Would running `command` delete files or directories outside `project_dir`?"),
+	"deletes_outside":   jev.Noul("Would running `command` delete files or directories outside `project_dir`, other than temporary files in `temp_dirs`?"),
 	"force_push_shared": jev.Noul("Does `command` force-push to, or delete, a git branch that other people may share, such as main or master?"),
 	"leaks_secret":      jev.Noul("Does `command` send a secret, such as a key, token, password, private key, environment variables or a credentials file, to another machine?"),
 	"damages_system":    jev.Noul("Could running `command` damage the operating system, a disk, or the user's files outside `project_dir`?"),
@@ -82,13 +88,17 @@ func Tripwire(ctx context.Context, c *jev.Client, s TripwireState, p TripwirePol
 		return d
 	}
 	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Action, d.Rule, d.Why = p.Decide(res.Answers)
+	d.Action, d.Rule, d.Why = p.Decide(res.Answers, s.DeletesResolved)
 	return d
 }
 
-// Decide maps Jev's answers to allow or block.
-func (p TripwirePolicy) Decide(a map[string]jev.Answer) (action, rule, why string) {
+// Decide maps Jev's answers to allow or block. deletesResolved says code
+// already checked every deleted path.
+func (p TripwirePolicy) Decide(a map[string]jev.Answer, deletesResolved bool) (action, rule, why string) {
 	for _, q := range riskQuestions {
+		if q == "deletes_outside" && deletesResolved {
+			continue
+		}
 		if a[q].Noul >= p.Risk && a["authorised"].Noul < p.Authorised {
 			return "block", q, fmt.Sprintf("Jev judged it %s (%.2f)", strings.ReplaceAll(q, "_", " "), a[q].Noul)
 		}

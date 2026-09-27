@@ -21,12 +21,17 @@ tdir=$root/bench/tasks/$task
 # BENCH_PROVIDER picks Girdle's provider: openrouter (default) or zen,
 # OpenCode Zen. BENCH_MODEL defaults to that provider's default model.
 provider=${BENCH_PROVIDER:-openrouter}
-default_model=meta/muse-spark-1.3-contributor
+# Space Bunny Alpha is free on OpenRouter for now (2026-09-27); it is an
+# anonymous model whose provider may log prompts, so public repos only.
+default_model=stealth/space-bunny-alpha
 [[ $provider == zen ]] && default_model=longcat-2.5-preview-free
 model=${BENCH_MODEL:-$default_model}
-# BENCH_JEV picks where Girdle calls Jev. Zen's free jev-1.13-free answers
-# within the pinned model's own run-to-run noise (decision 0017).
-jev_via=${BENCH_JEV:-zen}
+# Girdle's shell commands run offline (-offline-tools), so an agent can't
+# fetch the upstream fix a task was built from (decision 0018).
+# BENCH_JEV picks where Girdle calls Jev: typesafe (pinned) or zen. Zen's
+# free jev-1.13-free matches the pinned model, but its quota ran out under
+# benchmark load within minutes (decision 0017), so it is opt-in.
+jev_via=${BENCH_JEV:-typesafe}
 reasoning=${BENCH_REASONING:-medium}
 # Hard tasks are long by design: they get 20 minutes unless BENCH_TIMEOUT says otherwise.
 default_timeout=600
@@ -68,7 +73,7 @@ girdle | girdle-nojev | girdle-fast)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})
   timeout "$timeout_s" "$root/bin/girdle" -C "$work" -p "$prompt" -json \
-    -provider "$provider" -model "$model" -jev "$jev_via" -reasoning "$reasoning" -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
+    -provider "$provider" -model "$model" -jev "$jev_via" -reasoning "$reasoning" -offline-tools -log "$out/events.jsonl" ${extra[@]+"${extra[@]}"} \
     >"$out/stdout.jsonl" 2>"$out/stderr.txt" </dev/null
   agent_exit=$?
   ;;
@@ -105,7 +110,7 @@ secs=$(($(date +%s) - start))
 (cd "$work" && TASK_DIR="$tdir" bash "$tdir/check.sh") >"$out/check.txt" 2>&1
 check_exit=$?
 
-python3 "$root/bench/score_run.py" "$out" "$task" "$agent" "$rep" "$secs" "$agent_exit" "$check_exit"
+SCORE_MODEL="$model" SCORE_JEV="$jev_via" python3 "$root/bench/score_run.py" "$out" "$task" "$agent" "$rep" "$secs" "$agent_exit" "$check_exit"
 if [[ -n ${WARM_DIR:-} ]]; then
   (cd "$work" && git reset -q --hard && git clean -fdq)
 else

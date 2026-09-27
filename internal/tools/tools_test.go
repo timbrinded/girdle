@@ -66,7 +66,7 @@ func TestOptionalParamsAreNotRequired(t *testing.T) {
 		"edit":  {"path", "old_text", "new_text"},
 		"bash":  {"command"},
 	}
-	for _, tool := range All(t.TempDir(), nil) {
+	for _, tool := range All(t.TempDir(), Options{}) {
 		info := tool.Info()
 		got := slices.Sorted(slices.Values(info.Required))
 		if !slices.Equal(got, slices.Sorted(slices.Values(want[info.Name]))) {

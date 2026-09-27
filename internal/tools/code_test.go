@@ -85,7 +85,7 @@ func TestEditIgnoresWhitespace(t *testing.T) {
 		"f.go": "func f() {\n\tif x {\n\t\ty()\n\t}\n}\n",
 	})
 	var edit fantasy.AgentTool
-	for _, tool := range All(dir, nil) {
+	for _, tool := range All(dir, Options{}) {
 		if tool.Info().Name == "edit" {
 			edit = tool
 		}
@@ -103,7 +103,7 @@ func TestEditIgnoresWhitespace(t *testing.T) {
 
 	// An ambiguous whitespace-insensitive match is refused.
 	dir = writeTree(t, map[string]string{"g.go": "a\n\tb\nc\n  b\n"})
-	for _, tool := range All(dir, nil) {
+	for _, tool := range All(dir, Options{}) {
 		if tool.Info().Name == "edit" {
 			edit = tool
 		}

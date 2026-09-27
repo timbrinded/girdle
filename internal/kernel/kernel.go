@@ -111,6 +111,9 @@ type Config struct {
 	// catastrophic ones, handing the run back to the user.
 	Tripwire       bool
 	TripwirePolicy checkpoint.TripwirePolicy
+	// OfflineTools runs shell commands without outside network access
+	// (macOS only), so a benchmark agent can't fetch the fix it's tested on.
+	OfflineTools bool
 }
 
 // Session is one conversation in one working directory.
@@ -172,9 +175,9 @@ func NewSession(cfg Config) *Session {
 		cfg.MaxStepsPerTurn = 60
 	}
 	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
-	s.tools = tools.All(cfg.Dir, s.shellGuard())
+	s.tools = tools.All(cfg.Dir, s.toolOptions())
 	if cfg.Batch {
-		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.shellGuard())
+		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
 	}
 	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
 	s.agent = fantasy.NewAgent(
@@ -879,12 +882,14 @@ func renderChange(c tools.Change) string {
 	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
 }
 
-// shellGuard returns the tripwire as the tools' guard, or nil when it's off.
-func (s *Session) shellGuard() tools.Guard {
-	if !s.cfg.Tripwire {
-		return nil
+// toolOptions are how the session's tools run shell commands: through the
+// tripwire when it's on, and offline when the config says so.
+func (s *Session) toolOptions() tools.Options {
+	o := tools.Options{Offline: s.cfg.OfflineTools}
+	if s.cfg.Tripwire {
+		o.Guard = s.guard
 	}
-	return s.guard
+	return o
 }
 
 // guard is the tripwire: it reads a command's facts, blocks what the hard
@@ -893,10 +898,12 @@ func (s *Session) shellGuard() tools.Guard {
 // the user (decision 0014).
 func (s *Session) guard(ctx context.Context, command string) string {
 	home, _ := os.UserHomeDir()
-	state := checkpoint.TripwireState{Command: clipMiddle(command, 4000), ProjectDir: s.cfg.Dir, HomeDir: home, Task: clipMiddle(s.task, 2000)}
+	state := checkpoint.TripwireState{Command: clipMiddle(command, 4000), ProjectDir: s.cfg.Dir, HomeDir: home,
+		TempDirs: tools.TempDirs(), Task: clipMiddle(s.task, 2000)}
 	f, err := tools.ReadShell(ctx, command, s.cfg.Dir, home)
 	if err == nil {
 		state.Facts = f
+		state.DeletesResolved = len(f.DeletesOutside)+len(f.DeletesUnknown)+len(f.InlineEffects)+len(f.Destroys) == 0
 		if why := f.Floor(); why != "" {
 			d := checkpoint.TripwireDecision{Action: "block", Rule: "floor", Why: why, State: state}
 			s.emit(Event{Type: EventTripwire, Tripwire: &d})

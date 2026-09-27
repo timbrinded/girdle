@@ -29,14 +29,12 @@ import (
 
 const defaultModel = "meta/muse-spark-1.3-contributor"
 
-// OpenCode Zen serves some models free for a time: LongCat 2.5 Preview
-// (zero data retention), Muse Spark 1.3 Contributor (trains on prompts)
-// and Jev 1.13. See https://opencode.ai/docs/zen.
+// OpenCode Zen's free LLMs only work inside OpenCode, but its free Jev
+// works anywhere (decision 0017). See https://opencode.ai/docs/zen.
 const (
-	zenBaseURL      = "https://opencode.ai/zen/v1"
-	zenDefaultModel = "longcat-2.5-preview-free"
-	zenJevURL       = "https://opencode.ai/zen"
-	zenJevModel     = "jev-1.13-free"
+	zenBaseURL  = "https://opencode.ai/zen/v1"
+	zenJevURL   = "https://opencode.ai/zen"
+	zenJevModel = "jev-1.13-free"
 )
 
 // Exit codes for headless runs.
@@ -56,7 +54,7 @@ func run() int {
 		prompt      = flag.String("p", "", "run this prompt headless and exit when done")
 		dir         = flag.String("C", ".", "working directory")
 		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (ZEN_API_KEY)")
-		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "model ID at the provider (default "+defaultModel+", or "+zenDefaultModel+" with -provider zen)")
+		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "model ID at the provider (default "+defaultModel+" on OpenRouter; required with -provider zen)")
 		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (ZEN_API_KEY, "+zenJevModel+")")
 		reasoning   = flag.String("reasoning", "medium", "reasoning effort: none, minimal, low, medium, high, xhigh")
 		logPath     = flag.String("log", "", "event log path (default: a new file under ~/.local/state/girdle/sessions)")
@@ -78,6 +76,7 @@ func run() int {
 		structure   = flag.Bool("structure", false, "for a repository too large to snapshot whole, add the code that uses, is called by, or helps test the named code, found by parsing with ast-grep")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
+		offline     = flag.Bool("offline-tools", false, "run shell commands without outside network access (macOS), as the benchmark does so an agent can't fetch the fix it is tested on")
 		tripwire    = flag.Bool("tripwire", true, "check every shell command first and block ones that delete outside the project, force-push a shared branch, or send secrets off the machine")
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
@@ -99,7 +98,7 @@ func run() int {
 	defer stop()
 
 	if *provider == "zen" && !explicit["model"] && os.Getenv("GIRDLE_MODEL") == "" {
-		*model = zenDefaultModel
+		return fail(errors.New("-provider zen needs -model: Zen's free models only work inside OpenCode, so pick a paid one"))
 	}
 	cfg, err := buildConfig(ctx, workDir, *provider, *model, *reasoning, *jevVia, !*noJev)
 	if err != nil {
@@ -130,6 +129,7 @@ func run() int {
 	cfg.Compact = !*noJev && *compact
 	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
 	cfg.Tripwire = *tripwire
+	cfg.OfflineTools = *offline
 	cfg.Leftovers = !*noJev && withFast("leftovers", *leftovers)
 	cfg.TripwirePolicy = checkpoint.DefaultTripwirePolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy

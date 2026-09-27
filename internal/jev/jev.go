@@ -127,6 +127,7 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 	if err != nil {
 		return nil, fmt.Errorf("jev: encode request: %w", err)
 	}
+	const maxWait = 8 * time.Second
 	backoff := 500 * time.Millisecond
 	var lastErr error
 	for attempt := range c.MaxRetries + 1 {
@@ -136,7 +137,7 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 				return nil, ctx.Err()
 			case <-time.After(backoff):
 			}
-			backoff = min(backoff*2, 8*time.Second)
+			backoff = min(backoff*2, maxWait)
 		}
 		resp, retryAfter, err := c.do(ctx, body)
 		if err == nil {
@@ -145,6 +146,12 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 		lastErr = err
 		if se, ok := errors.AsType[*StatusError](err); ok && !retryable(se.Code) {
 			return nil, err
+		}
+		// A server that asks for a long wait has run out of quota: a
+		// checkpoint that waited would stall the agent for as long, so give
+		// up and let it fall back (OpenCode Zen once said ten hours).
+		if retryAfter > maxWait {
+			return nil, fmt.Errorf("jev: rate limited for %s; not waiting: %w", retryAfter, err)
 		}
 		if retryAfter > 0 {
 			backoff = retryAfter

@@ -1,6 +1,7 @@
 """Write result.json for one benchmark run from its logs."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -76,14 +77,26 @@ else:
 check_text = (out / "check.txt").read_text(errors="replace") if (out / "check.txt").exists() else ""
 result["invalid"] = (not result["pass"]) and "redeclared in this block" in check_text and "zz_hidden" in check_text
 
-# Both agents report input excluding cache reads. Muse Spark 1.3 Contributor
-# on OpenRouter: $0.10/M input, $0.002/M cache reads, $0.20/M output.
-# Jev: $0.042/M input.
+# Both agents report input excluding cache reads. Prices are per token, by
+# the model the run used (SCORE_MODEL, from run-one.sh): Muse Spark 1.3
+# Contributor on OpenRouter is $0.10/M input, $0.002/M cache reads and
+# $0.20/M output. Free models cost nothing. Jev is $0.042/M input, or free
+# through OpenCode Zen (SCORE_JEV=zen).
+PRICES = {"meta/muse-spark-1.3-contributor": (0.10e-6, 0.002e-6, 0.20e-6)}
+FREE = {"stealth/space-bunny-alpha"}
+model = os.environ.get("SCORE_MODEL", "meta/muse-spark-1.3-contributor")
+if model.endswith(":free") or model in FREE:
+    price_in, price_cache, price_out = 0.0, 0.0, 0.0
+else:
+    price_in, price_cache, price_out = PRICES.get(model, PRICES["meta/muse-spark-1.3-contributor"])
+    result["cost_estimated"] = model not in PRICES
+price_jev = 0.0 if os.environ.get("SCORE_JEV") == "zen" else 0.042e-6
+result["model"] = model
 result["cost_usd"] = round(
-    result["input_tokens"] * 0.10e-6
-    + result["cache_read_tokens"] * 0.002e-6
-    + result["output_tokens"] * 0.20e-6
-    + result.get("jev_tokens", 0) * 0.042e-6,
+    result["input_tokens"] * price_in
+    + result["cache_read_tokens"] * price_cache
+    + result["output_tokens"] * price_out
+    + result.get("jev_tokens", 0) * price_jev,
     5,
 )
 (out / "result.json").write_text(json.dumps(result, indent=2))

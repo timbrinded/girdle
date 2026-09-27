@@ -15,15 +15,15 @@ import (
 // lookup fetches every file, definition and search the model needs in one
 // call, and apply makes every change and runs the check that verifies them.
 func Batched(dir string) []fantasy.AgentTool {
-	ts, _ := BatchedWithReset(dir, true, nil)
+	ts, _ := BatchedWithReset(dir, true, Options{})
 	return ts
 }
 
 // BatchedWithReset returns the fast-flow tools and a function the kernel
 // calls at the start of each request, so apply's reproduce knows what the
 // request has changed.
-func BatchedWithReset(dir string, reproduce bool, guard Guard) ([]fantasy.AgentTool, func()) {
-	t := toolset{dir: dir, guard: guard}
+func BatchedWithReset(dir string, reproduce bool, opts Options) ([]fantasy.AgentTool, func()) {
+	t := toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}
 	reset := func() {}
 	if reproduce {
 		t.orig = &originals{files: map[string]*[]byte{}}
@@ -169,8 +169,8 @@ func ParseApply(input string) (paths []string, check string, ok bool) {
 // RunCheck runs a check command in dir the way apply does, with pipefail,
 // and returns its output and exit code. ok is false if the exit code is
 // missing from the output.
-func RunCheck(ctx context.Context, dir, command string, guard Guard) (out string, code int, ok bool) {
-	return toolset{dir: dir, guard: guard}.runCheck(ctx, command)
+func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int, ok bool) {
+	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}.runCheck(ctx, command)
 }
 
 func (t toolset) runCheck(ctx context.Context, command string) (out string, code int, ok bool) {

@@ -12,7 +12,8 @@
   | Zen free against pinned, 40 states | 0.0115 | 0.23 | 1.2% | 0.9% |
   | Pinned against itself, 20 states | 0.0115 | 0.14 | 0.9% | 0.5% |
 
-  The benchmark now calls Zen's free Jev by default (`BENCH_JEV=zen`), and `BENCH_JEV=typesafe` restores the pinned one. Girdle itself still defaults to the pinned TypeSafe model. `-jev zen` switches it.
+  But the free quota didn't last. Within minutes of benchmark load, and prefetch alone sends one request per candidate file, every request got 429 with `Retry-After: 35824`, about ten hours. So the benchmark keeps the pinned TypeSafe Jev by default, and Zen's is opt-in (`BENCH_JEV=zen`, or `-jev zen` for Girdle).
+- **The quota exposed a Girdle bug.** The Jev client obeyed any `Retry-After`, so each checkpoint slept for hours and runs hung until the benchmark killed them. The client now waits at most 8 s. A longer requested wait means the quota is gone, so it fails at once, and the checkpoint falls back: the tripwire blocks, and the other checkpoints use their defaults.
 - **Plumbing.**
   - `-provider zen` and `-jev zen` read `ZEN_API_KEY`, or `OPENCODE_API_KEY`.
   - `-provider zen` still works for Zen's paid models. It uses chat completions, with the Responses API for `muse-*` models.

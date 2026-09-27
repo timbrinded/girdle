@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,10 +32,22 @@ const (
 // command must not run, or "" to let it run.
 type Guard func(ctx context.Context, command string) string
 
-// All returns the built-in tools bound to dir. guard, if set, sees every
-// shell command first.
-func All(dir string, guard Guard) []fantasy.AgentTool {
-	t := toolset{dir: dir, guard: guard}
+// Options shape how the tools run shell commands.
+type Options struct {
+	// Guard, if set, sees every shell command first.
+	Guard Guard
+	// Offline runs shell commands without access to other machines;
+	// connections to this machine still work. A benchmark uses it so an
+	// agent can't fetch the upstream fix it is being tested on.
+	Offline bool
+}
+
+// offlineProfile is the macOS sandbox profile for offline commands.
+const offlineProfile = `(version 1)(allow default)(deny network-outbound (remote ip))(allow network-outbound (remote ip "localhost:*"))`
+
+// All returns the built-in tools bound to dir.
+func All(dir string, opts Options) []fantasy.AgentTool {
+	t := toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool("read", "Read a text file. Returns up to 2000 lines starting at offset (1-based).", t.read),
 		fantasy.NewAgentTool("write", "Create or overwrite a file with the given content. Creates parent directories.", t.write),
@@ -53,6 +66,8 @@ type toolset struct {
 	orig *originals
 	// guard, when set, sees every shell command before it runs.
 	guard Guard
+	// offline runs shell commands without outside network access.
+	offline bool
 }
 
 func (t toolset) path(p string) string {
@@ -166,7 +181,14 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command)
+	name, args := "bash", []string{"-c", in.Command}
+	if t.offline {
+		if runtime.GOOS != "darwin" {
+			return fantasy.NewTextErrorResponse("[Girdle] Offline commands need macOS's sandbox-exec, so this command was not run.\n" + exitTrailer + "126]"), nil
+		}
+		name, args = "sandbox-exec", append([]string{"-p", offlineProfile, "bash"}, args...)
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = t.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
