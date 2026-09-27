@@ -42,6 +42,9 @@ type searchInput struct {
 }
 
 func (t toolset) search(ctx context.Context, in searchInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if in.Path != "" && t.denied(t.path(in.Path)) {
+		return deniedError(t.path(in.Path)), nil
+	}
 	out, err := Search(ctx, t.dir, in.Pattern, in.Path, in.Glob, in.IgnoreCase)
 	if err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil

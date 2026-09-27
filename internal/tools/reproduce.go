@@ -23,6 +23,25 @@ type originals struct {
 	files map[string]*[]byte // absolute path → content; nil if the file didn't exist
 }
 
+// fileState is a file's content, or its absence.
+type fileState struct {
+	data   []byte
+	exists bool
+}
+
+func readState(p string) fileState {
+	data, err := os.ReadFile(p)
+	return fileState{data, err == nil}
+}
+
+func (st fileState) restore(p string) {
+	if st.exists {
+		_ = os.WriteFile(p, st.data, 0o644)
+	} else {
+		_ = os.Remove(p)
+	}
+}
+
 func (o *originals) remember(path string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -56,6 +75,30 @@ func (o *originals) codeFiles(dir string) []string {
 	return out
 }
 
+// withOriginals puts back the original content of paths, runs fn, and then
+// restores the files as they were.
+func (t toolset) withOriginals(paths []string, fn func()) {
+	now := map[string]fileState{}
+	for _, p := range paths {
+		now[p] = readState(p)
+	}
+	defer func() {
+		for p, st := range now {
+			st.restore(p)
+		}
+	}()
+	t.orig.mu.Lock()
+	for _, p := range paths {
+		if old := t.orig.files[p]; old != nil {
+			fileState{*old, true}.restore(p)
+		} else {
+			fileState{}.restore(p)
+		}
+	}
+	t.orig.mu.Unlock()
+	fn()
+}
+
 // reproduce runs cmd with the request's code changes undone, then restores
 // them. It returns a note for the apply result, and whether the test failed
 // to reproduce the bug.
@@ -67,36 +110,12 @@ func (t toolset) reproduce(ctx context.Context, cmd string) (note string, weak b
 	if len(paths) == 0 {
 		return "[Girdle] reproduce not run: this request changed no code, only tests.", false
 	}
-	type state struct {
-		data   []byte
-		exists bool
-	}
-	now := map[string]state{}
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		now[p] = state{data, err == nil}
-	}
-	restore := func() {
-		for p, st := range now {
-			if st.exists {
-				_ = os.WriteFile(p, st.data, 0o644)
-			} else {
-				_ = os.Remove(p)
-			}
-		}
-	}
-	defer restore()
-	t.orig.mu.Lock()
-	for _, p := range paths {
-		if old := t.orig.files[p]; old != nil {
-			_ = os.WriteFile(p, *old, 0o644)
-		} else {
-			_ = os.Remove(p)
-		}
-	}
-	t.orig.mu.Unlock()
-
-	out, code, ok := t.runCheck(ctx, cmd)
+	var (
+		out  string
+		code int
+		ok   bool
+	)
+	t.withOriginals(paths, func() { out, code, ok = t.runCheck(ctx, cmd) })
 	switch {
 	case !ok:
 		return "[Girdle] reproduce could not be run: " + clipTail(out, 400), false

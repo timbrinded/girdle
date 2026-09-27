@@ -67,10 +67,6 @@ type Config struct {
 	// Prefetch asks Jev, for a repository too large to snapshot whole,
 	// which other files the request needs, and adds them. It needs Snapshot.
 	Prefetch bool
-	// Structure adds, for a repository too large to snapshot whole, the
-	// code around the named code, found by parsing with ast-grep. It needs
-	// Snapshot.
-	Structure bool
 	// Batch asks the LLM to make all its edits and run the checks in one
 	// step, since every extra step costs seconds of latency.
 	Batch bool
@@ -114,6 +110,15 @@ type Config struct {
 	// OfflineTools runs shell commands without outside network access
 	// (macOS only), so a benchmark agent can't fetch the fix it's tested on.
 	OfflineTools bool
+	// Wide fills a large repository's snapshot with up to WideBudget bytes
+	// of whole code files, ranked by Jev, so the LLM reads less before it
+	// writes. It needs Prefetch.
+	Wide       bool
+	WideBudget int
+	// DenyRead lists path prefixes the tools may not read outside the
+	// working directory, such as other copies of a benchmark's code under
+	// test.
+	DenyRead []string
 }
 
 // Session is one conversation in one working directory.
@@ -202,11 +207,11 @@ func NewSession(cfg Config) *Session {
 		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
 		"compact":     fmt.Sprint(cfg.Compact),
 		"prefetch":    fmt.Sprint(cfg.Prefetch),
-		"structure":   fmt.Sprint(cfg.Structure),
 		"stepfan":     fmt.Sprint(cfg.StepPolicy.Fanout),
 		"reproduce":   fmt.Sprint(cfg.Reproduce),
 		"tripwire":    fmt.Sprint(cfg.Tripwire),
 		"leftovers":   fmt.Sprint(cfg.Leftovers),
+		"wide":        fmt.Sprint(cfg.Wide),
 	}})
 	return s
 }
@@ -261,7 +266,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		}
 		wg.Go(func() {
 			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt,
-				SnapshotOptions{Pick: pick, Related: s.cfg.Structure})
+				SnapshotOptions{Pick: pick, Wide: s.wideBudget()})
 		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
@@ -278,9 +283,6 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	if s.cfg.Snapshot {
 		meta := map[string]string{
 			"files": fmt.Sprint(snap.Files), "included": fmt.Sprint(snap.Included), "bytes": fmt.Sprint(snap.Bytes),
-		}
-		if len(snap.Related) > 0 {
-			meta["related"] = strings.Join(snap.Related, ",")
 		}
 		if snap.Candidates > 0 {
 			s.addUsage(Usage{JevTokens: snap.Prefetch.InputTokens})
@@ -882,10 +884,21 @@ func renderChange(c tools.Change) string {
 	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
 }
 
+// DefaultWideBudget is a wide snapshot's code budget: about 90k tokens,
+// which Space Bunny reads from its prompt cache at little cost per step.
+const DefaultWideBudget = 320 << 10
+
+func (s *Session) wideBudget() int {
+	if !s.cfg.Wide {
+		return 0
+	}
+	return cmp.Or(s.cfg.WideBudget, DefaultWideBudget)
+}
+
 // toolOptions are how the session's tools run shell commands: through the
 // tripwire when it's on, and offline when the config says so.
 func (s *Session) toolOptions() tools.Options {
-	o := tools.Options{Offline: s.cfg.OfflineTools}
+	o := tools.Options{Offline: s.cfg.OfflineTools, DenyRead: s.cfg.DenyRead}
 	if s.cfg.Tripwire {
 		o.Guard = s.guard
 	}

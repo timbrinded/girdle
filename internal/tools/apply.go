@@ -23,7 +23,7 @@ func Batched(dir string) []fantasy.AgentTool {
 // calls at the start of each request, so apply's reproduce knows what the
 // request has changed.
 func BatchedWithReset(dir string, reproduce bool, opts Options) ([]fantasy.AgentTool, func()) {
-	t := toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}
+	t := newToolset(dir, opts)
 	reset := func() {}
 	if reproduce {
 		t.orig = &originals{files: map[string]*[]byte{}}
@@ -83,7 +83,7 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	var b strings.Builder
 	failed := 0
 	for _, c := range in.Changes {
-		if t.orig != nil {
+		if t.orig != nil && c.Path != "" {
 			t.orig.remember(t.path(c.Path))
 		}
 		var res fantasy.ToolResponse
@@ -112,8 +112,7 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 	}
 	fmt.Fprintf(&b, "$ %s\n", in.Check)
 	// pipefail, so that "go test | tail" still fails when the tests do.
-	res, _ := t.bash(ctx, bashInput{Command: "set -o pipefail\n" + in.Check}, call)
-	out := res.Content
+	out := t.shell(ctx, "set -o pipefail\n"+in.Check, defaultTimeout).text()
 	if code, ok := ExitCode(out); ok && code == 0 && in.Reproduce != "" {
 		// The note goes before the exit-code line. A test that doesn't
 		// reproduce the bug turns the result into a failure, so it isn't
@@ -170,11 +169,11 @@ func ParseApply(input string) (paths []string, check string, ok bool) {
 // and returns its output and exit code. ok is false if the exit code is
 // missing from the output.
 func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int, ok bool) {
-	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}.runCheck(ctx, command)
+	return newToolset(dir, opts).runCheck(ctx, command)
 }
 
 func (t toolset) runCheck(ctx context.Context, command string) (out string, code int, ok bool) {
-	res, _ := t.bash(ctx, bashInput{Command: "set -o pipefail\n" + command}, fantasy.ToolCall{})
-	code, ok = ExitCode(res.Content)
-	return res.Content, code, ok
+	out = t.shell(ctx, "set -o pipefail\n"+command, defaultTimeout).text()
+	code, ok = ExitCode(out)
+	return out, code, ok
 }

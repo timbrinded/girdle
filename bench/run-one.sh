@@ -65,10 +65,34 @@ else
 fi
 prompt=$(cat "$tdir/task.md")
 
+# Other copies of the code under test would let an agent copy the fix: the
+# benchmark's clones of other commits, other runs' warm copies, and a
+# released version in the Go module cache or in Python's site-packages. An
+# agent read gjson's released feature from the module cache (decision 0019),
+# so Girdle's tools may not read any of them; the working copy stays open.
+deny=(-deny-read "$root/bench/.cache" -deny-read "$root/bench/.warm")
+if [[ -f $work/go.mod ]]; then
+  mod=$(awk '$1 == "module" {print $2; exit}' "$work/go.mod")
+  modcache=$(go env GOMODCACHE)
+  # The module cache writes a capital as ! and the lower-case letter. A
+  # major-version suffix is dropped too, to cover the other majors.
+  for m in "$mod" "${mod%/v[0-9]*}"; do
+    esc=$(printf %s "$m" | perl -pe 's/([A-Z])/!\l$1/g')
+    deny+=(-deny-read "$modcache/$esc@" -deny-read "$modcache/cache/download/$esc/")
+  done
+fi
+for pkg in "$work"/*/__init__.py "$work"/src/*/__init__.py; do
+  [[ -f $pkg ]] || continue
+  name=$(basename "$(dirname "$pkg")")
+  while read -r site; do
+    [[ -n $site ]] && deny+=(-deny-read "$site/$name")
+  done < <(python3 -c 'import site; print("\n".join(site.getsitepackages() + [site.getusersitepackages()]))' 2>/dev/null)
+done
+
 start=$(date +%s)
 case $base in
 girdle | girdle-nojev | girdle-fast)
-  extra=()
+  extra=("${deny[@]}")
   [[ $base == girdle-nojev ]] && extra+=(--no-checkpoints)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})

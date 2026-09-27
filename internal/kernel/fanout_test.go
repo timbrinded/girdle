@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -95,6 +96,64 @@ func TestPrefetchAddsPickedFiles(t *testing.T) {
 	}
 }
 
+func TestWideSnapshotFillsItsBudgetInJevsOrder(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{"a.go": "package p\n\nfunc Foo() {}\n"}
+	scores := map[string]float64{}
+	for i := range 12 {
+		p := fmt.Sprintf("f%02d.go", i)
+		files[p] = "package p\n\nfunc F" + fmt.Sprint(i) + "() {}\n" + strings.Repeat("// line of code\n", 400)
+		scores[p] = 0.9 - float64(i)*0.05 // f00 first; f11 scores 0.35
+	}
+	files["big.go"] = "package p\n\nfunc Big() {}\n" + strings.Repeat("// line of code\n", 2000) // 32 KB
+	scores["big.go"] = 0.95
+	files["low.go"] = "package p\n\nfunc Low() {}\n"
+	scores["low.go"] = 0.1
+	writeFiles(t, dir, files)
+	pick := func(context.Context, string, []checkpoint.FileOutline) checkpoint.Prefetch {
+		return checkpoint.Prefetch{Scores: scores}
+	}
+	narrow := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
+	if len(narrow.Prefetched) > prefetchMax || slices.Contains(narrow.Prefetched, "big.go") {
+		t.Fatalf("a normal snapshot prefetched %v", narrow.Prefetched)
+	}
+	wide := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick, Wide: 64 << 10})
+	if len(wide.Prefetched) == 0 || wide.Prefetched[0] != "big.go" {
+		t.Fatalf("a wide snapshot didn't start with the best file, 32 KB as it is: %v", wide.Prefetched)
+	}
+	if slices.Contains(wide.Prefetched, "low.go") || wide.Bytes > 64<<10 {
+		t.Fatalf("a wide snapshot went past its floor or its budget: %v, %d bytes", wide.Prefetched, wide.Bytes)
+	}
+	if len(wide.Prefetched) <= len(narrow.Prefetched) {
+		t.Fatalf("wide prefetched %d files, narrow %d", len(wide.Prefetched), len(narrow.Prefetched))
+	}
+}
+
+func TestPrefetchSkipsDataInABigRepository(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"a.go":     "package p\n\nfunc Foo() {}\n",
+		"lex.go":   "package p\n\nfunc lex() {}\n",
+		"parse.go": "package p\n\ntype parser struct{}\n",
+	}
+	for i := range prefetchJudgeable + 10 {
+		files[fmt.Sprintf("internal/testdata/case%03d.toml", i)] = strings.Repeat("key = 1\n", 30)
+	}
+	writeFiles(t, dir, files)
+	var asked []string
+	pick := func(_ context.Context, _ string, files []checkpoint.FileOutline) checkpoint.Prefetch {
+		for _, f := range files {
+			asked = append(asked, f.Path)
+		}
+		return checkpoint.Prefetch{}
+	}
+	TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
+	slices.Sort(asked)
+	if !slices.Equal(asked, []string{"lex.go", "parse.go"}) {
+		t.Fatalf("asked about %v, not just the code", asked)
+	}
+}
+
 // commandModel runs one shell command, then replies.
 type commandModel struct {
 	fantasy.LanguageModel
@@ -163,37 +222,6 @@ func TestTripwireHandsBackToTheUser(t *testing.T) {
 				t.Fatalf("Run = %s %q, ran %v, trips %d", outcome, reason, ran, len(trips))
 			}
 		})
-	}
-}
-
-func TestRelatedCode(t *testing.T) {
-	if !tools.HaveAstGrep() {
-		t.Skip("ast-grep is not installed")
-	}
-	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{
-		"go.mod":           "module example.com/p\n\ngo 1.24\n",
-		"a.go":             "package p\n\n// Foo does the thing.\nfunc Foo() int { return helperBar() + 1 }\n",
-		"c.go":             "package p\n\n// helperBar is what Foo builds on.\nfunc helperBar() int { return 41 }\n",
-		"other.go":         "package p\n\nfunc Unrelated() {}\n",
-		"a_test.go":        "package p\n\nimport (\n\t\"testing\"\n\n\t\"example.com/p/testutil\"\n)\n\nfunc TestFoo(t *testing.T) { testutil.Check(t, Foo() == 42) }\n",
-		"testutil/util.go": "package testutil\n\nimport \"testing\"\n\n// Check fails t unless ok.\nfunc Check(t *testing.T, ok bool) {\n\tif !ok {\n\t\tt.Fatal(\"check failed\")\n\t}\n}\n",
-		"data.txt":         strings.Repeat("filler line\n", 2000),
-	})
-	snap := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Related: true})
-	joined := strings.Join(snap.Related, " ")
-	for _, want := range []string{"c.go:3-4", "testutil/util.go:5-10"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("related %v lacks %s", snap.Related, want)
-		}
-	}
-	if strings.Contains(joined, "other.go") {
-		t.Fatalf("related %v includes unrelated code", snap.Related)
-	}
-	for _, want := range []string{`why="called by Foo"`, `why="used by the tests of Foo"`, "// helperBar is what Foo builds on."} {
-		if !strings.Contains(snap.Text, want) {
-			t.Fatalf("snapshot lacks %q:\n%s", want, snap.Text)
-		}
 	}
 }
 

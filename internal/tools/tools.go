@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -40,14 +41,64 @@ type Options struct {
 	// connections to this machine still work. A benchmark uses it so an
 	// agent can't fetch the upstream fix it is being tested on.
 	Offline bool
+	// DenyRead lists absolute path prefixes the tools may not read, other
+	// than inside the working directory: other copies of the code under
+	// test, which a benchmark agent could copy the fix from. Shell commands
+	// get it from macOS's sandbox-exec.
+	DenyRead []string
 }
 
 // offlineProfile is the macOS sandbox profile for offline commands.
 const offlineProfile = `(version 1)(allow default)(deny network-outbound (remote ip))(allow network-outbound (remote ip "localhost:*"))`
 
+// sandboxProfile is the macOS sandbox profile for shell commands: offline if
+// asked, and unable to read under the denied prefixes except inside dir.
+// Later rules win, so dir's allow comes last.
+func sandboxProfile(dir string, offline bool, deny []string) string {
+	var b strings.Builder
+	b.WriteString("(version 1)(allow default)")
+	if offline {
+		b.WriteString(strings.TrimPrefix(offlineProfile, "(version 1)(allow default)"))
+	}
+	if len(deny) > 0 {
+		for _, p := range deny {
+			fmt.Fprintf(&b, `(deny file-read* (regex #"^%s"))`, regexp.QuoteMeta(p))
+		}
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = real
+		}
+		fmt.Fprintf(&b, `(allow file-read* (subpath %q))`, dir)
+	}
+	return b.String()
+}
+
+// denied reports whether p, an absolute path, is under a denied prefix and
+// outside the working directory.
+func (t toolset) denied(p string) bool {
+	if within(p, t.dir) {
+		return false
+	}
+	for _, d := range t.denyRead {
+		if strings.HasPrefix(p, d) {
+			return true
+		}
+	}
+	return false
+}
+
+func within(p, dir string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// deniedError is what a tool says when asked to touch a denied path.
+func deniedError(p string) fantasy.ToolResponse {
+	return fantasy.NewTextErrorResponse(p + " can't be read here: it is outside the working directory, in a place this session may not read")
+}
+
 // All returns the built-in tools bound to dir.
 func All(dir string, opts Options) []fantasy.AgentTool {
-	t := toolset{dir: dir, guard: opts.Guard, offline: opts.Offline}
+	t := newToolset(dir, opts)
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool("read", "Read a text file. Returns up to 2000 lines starting at offset (1-based).", t.read),
 		fantasy.NewAgentTool("write", "Create or overwrite a file with the given content. Creates parent directories.", t.write),
@@ -68,6 +119,12 @@ type toolset struct {
 	guard Guard
 	// offline runs shell commands without outside network access.
 	offline bool
+	// denyRead lists path prefixes the tools may not read outside dir.
+	denyRead []string
+}
+
+func newToolset(dir string, opts Options) toolset {
+	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline, denyRead: opts.DenyRead}
 }
 
 func (t toolset) path(p string) string {
@@ -84,6 +141,9 @@ type readInput struct {
 }
 
 func (t toolset) read(_ context.Context, in readInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if p := t.path(in.Path); t.denied(p) {
+		return deniedError(p), nil
+	}
 	data, err := os.ReadFile(t.path(in.Path))
 	if err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
@@ -112,6 +172,9 @@ type writeInput struct {
 
 func (t toolset) write(_ context.Context, in writeInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	p := t.path(in.Path)
+	if t.denied(p) {
+		return deniedError(p), nil
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
@@ -130,6 +193,9 @@ type editInput struct {
 
 func (t toolset) edit(_ context.Context, in editInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	p := t.path(in.Path)
+	if t.denied(p) {
+		return deniedError(p), nil
+	}
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
@@ -173,20 +239,41 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	if in.TimeoutSeconds > 0 {
 		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxTimeout)
 	}
+	r := t.shell(ctx, in.Command, timeout)
+	if r.refused {
+		return fantasy.NewTextErrorResponse(r.text()), nil
+	}
+	return fantasy.NewTextResponse(r.text()), nil
+}
+
+// shellRun is one shell command's result.
+type shellRun struct {
+	out     string // combined output, clipped, with any note about how it ended
+	code    int
+	refused bool // the guard or the platform refused to run it
+}
+
+// text is the result as the tools report it: the output, then the exit code
+// on its own line.
+func (r shellRun) text() string {
+	return fmt.Sprintf("%s\n%s%d]", strings.TrimRight(r.out, "\n"), exitTrailer, r.code)
+}
+
+func (t toolset) shell(ctx context.Context, command string, timeout time.Duration) shellRun {
 	if t.guard != nil {
-		if why := t.guard(ctx, in.Command); why != "" {
-			return fantasy.NewTextErrorResponse("[Girdle] Not run: " + why + ". Girdle never runs a command that deletes outside the project, force-pushes a shared branch, or sends secrets off the machine. If the task needs it, stop and tell the user.\n" + exitTrailer + "126]"), nil
+		if why := t.guard(ctx, command); why != "" {
+			return shellRun{out: "[Girdle] Not run: " + why + ". Girdle never runs a command that deletes outside the project, force-pushes a shared branch, or sends secrets off the machine. If the task needs it, stop and tell the user.", code: 126, refused: true}
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	name, args := "bash", []string{"-c", in.Command}
-	if t.offline {
+	name, args := "bash", []string{"-c", command}
+	if t.offline || len(t.denyRead) > 0 {
 		if runtime.GOOS != "darwin" {
-			return fantasy.NewTextErrorResponse("[Girdle] Offline commands need macOS's sandbox-exec, so this command was not run.\n" + exitTrailer + "126]"), nil
+			return shellRun{out: "[Girdle] Sandboxed commands need macOS's sandbox-exec, so this command was not run.", code: 126, refused: true}
 		}
-		name, args = "sandbox-exec", append([]string{"-p", offlineProfile, "bash"}, args...)
+		name, args = "sandbox-exec", append([]string{"-p", sandboxProfile(t.dir, t.offline, t.denyRead), "bash"}, args...)
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = t.dir
@@ -197,21 +284,21 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	err := cmd.Run()
+	var r shellRun
 
-	code := 0
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		code = exitErr.ExitCode()
+		r.code = exitErr.ExitCode()
 	} else if err != nil {
-		code = -1
+		r.code = -1
 	}
-	text := clip(out.String())
+	r.out = clip(out.String())
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
-		text += fmt.Sprintf("\n[timed out after %s]", timeout)
-	case err != nil && code == -1:
-		text += "\n[" + err.Error() + "]"
+		r.out += fmt.Sprintf("\n[timed out after %s]", timeout)
+	case err != nil && r.code == -1:
+		r.out += "\n[" + err.Error() + "]"
 	}
-	return fantasy.NewTextResponse(fmt.Sprintf("%s\n%s%d]", strings.TrimRight(text, "\n"), exitTrailer, code)), nil
+	return r
 }
 
 const exitTrailer = "[exit code "

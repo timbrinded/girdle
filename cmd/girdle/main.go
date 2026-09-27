@@ -73,9 +73,10 @@ func run() int {
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
 		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed (shelved: not part of -fast)")
 		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
-		structure   = flag.Bool("structure", false, "for a repository too large to snapshot whole, add the code that uses, is called by, or helps test the named code, found by parsing with ast-grep")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
+		wide        = flag.Bool("wide", false, "for a repository too large to snapshot whole, fill the snapshot with about 320 KB of whole code files, in the order Jev ranks them")
+		denyRead    []string
 		offline     = flag.Bool("offline-tools", false, "run shell commands without outside network access (macOS), as the benchmark does so an agent can't fetch the fix it is tested on")
 		tripwire    = flag.Bool("tripwire", true, "check every shell command first and block ones that delete outside the project, force-push a shared branch, or send secrets off the machine")
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
@@ -83,6 +84,13 @@ func run() int {
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
 	)
+	flag.Func("deny-read", "an absolute path prefix that tools may not read outside the working directory, such as other copies of a benchmark's code under test (repeatable; shell commands need macOS's sandbox-exec)", func(v string) error {
+		if !filepath.IsAbs(v) {
+			return fmt.Errorf("%q is not an absolute path", v)
+		}
+		denyRead = append(denyRead, v)
+		return nil
+	})
 	flag.Parse()
 	// -fast turns a set of flags on. A flag set explicitly wins, so an
 	// ablation is -fast with one part set to false.
@@ -122,7 +130,6 @@ func run() int {
 	cfg.Reproduce = cfg.Batch && withFast("reproduce", *reproduce)
 	cfg.Heartbeat = !*noJev && withFast("heartbeat", *heartbeat)
 	cfg.Prefetch = cfg.Snapshot && !*noJev && withFast("prefetch", *prefetch)
-	cfg.Structure = cfg.Snapshot && *structure
 	if withFast("stepfan", *stepfan) {
 		cfg.StepPolicy = checkpoint.FanoutStepPolicy
 	}
@@ -130,6 +137,8 @@ func run() int {
 	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
 	cfg.Tripwire = *tripwire
 	cfg.OfflineTools = *offline
+	cfg.DenyRead = denyRead
+	cfg.Wide = cfg.Prefetch && *wide
 	cfg.Leftovers = !*noJev && withFast("leftovers", *leftovers)
 	cfg.TripwirePolicy = checkpoint.DefaultTripwirePolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
