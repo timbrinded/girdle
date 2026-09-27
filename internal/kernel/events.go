@@ -30,6 +30,8 @@ const (
 	EventHeartbeat     EventType = "heartbeat"  // Jev's view of whether the turn is progressing
 	EventCompact       EventType = "compact"    // older tool output pruned from the context
 	EventReasoning     EventType = "reasoning"  // the LLM's reasoning summary for a step, logged only
+	EventTripwire      EventType = "tripwire"   // a shell command the tripwire judged or blocked
+	EventLeftovers     EventType = "leftovers"  // names or code the request wants gone, still there
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"
@@ -52,6 +54,7 @@ type Event struct {
 	Route    *checkpoint.RouteDecision `json:"route,omitempty"`
 	// Heartbeat is set on heartbeat events.
 	Heartbeat *checkpoint.HeartbeatDecision `json:"heartbeat,omitempty"`
+	Tripwire  *checkpoint.TripwireDecision  `json:"tripwire,omitempty"`
 	Outcome   Outcome                       `json:"outcome,omitempty"`
 	Reason    string                        `json:"reason,omitempty"`
 	Meta      map[string]string             `json:"meta,omitempty"`

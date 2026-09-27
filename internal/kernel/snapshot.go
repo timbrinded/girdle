@@ -32,6 +32,17 @@ type Snapshot struct {
 	Prefetched []string
 	Prefetch   checkpoint.Prefetch
 	Candidates int
+	// Related lists the units of code added because they use, are called
+	// by, or help test the named code, as path:start-end.
+	Related []string
+}
+
+// SnapshotOptions are the extras a snapshot of a large repository can add.
+type SnapshotOptions struct {
+	// Pick judges which other files the request needs.
+	Pick Picker
+	// Related adds the code around the named code, found by parsing.
+	Related bool
 }
 
 // Picker judges how likely a request is to need each file.
@@ -56,15 +67,16 @@ var skipDirs = []string{".git", "node_modules", "vendor", ".venv", "venv", "__py
 // plus the definitions and uses of the code the request names in backticks,
 // found by exact lookup: filling the budget in path order mostly sent docs.
 func TakeSnapshot(ctx context.Context, dir string, budget int, request string) Snapshot {
-	return TakeSnapshotWith(ctx, dir, budget, request, nil)
+	return TakeSnapshotWith(ctx, dir, budget, request, SnapshotOptions{})
 }
 
-// TakeSnapshotWith is TakeSnapshot with a picker: for a large repository it
-// also adds the files pick judges the request most likely to need.
-func TakeSnapshotWith(ctx context.Context, dir string, budget int, request string, pick Picker) Snapshot {
+// TakeSnapshotWith is TakeSnapshot with extras for a large repository: the
+// code around the named code, and the files a picker judges the request
+// most likely to need.
+func TakeSnapshotWith(ctx context.Context, dir string, budget int, request string, opts SnapshotOptions) Snapshot {
 	paths := listFiles(ctx, dir)
 	if total := textBytes(dir, paths); total > budget {
-		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, pick)
+		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, opts)
 	}
 	var snap Snapshot
 	snap.Files = len(paths)
@@ -196,8 +208,16 @@ func NamedCode(request string, isFile func(string) bool) (files, names []string)
 
 var identifierName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{2,}$`)
 
-func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, budget int, request string, pick Picker) Snapshot {
+func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, budget int, request string, opts SnapshotOptions) Snapshot {
 	snap := Snapshot{Files: len(paths)}
+	// Parsing runs while the named code is found.
+	var units []tools.Unit
+	parsed := make(chan struct{})
+	if opts.Related {
+		go func() { units = tools.Units(ctx, dir); close(parsed) }()
+	} else {
+		close(parsed)
+	}
 	var list strings.Builder
 	for i, p := range paths {
 		if i == maxListed {
@@ -216,12 +236,15 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		snap.Bytes += len(text)
 		return true
 	}
+	// whole lists the files whose full text is shown.
+	var whole []string
 	addFile := func(f string) {
 		data, err := os.ReadFile(filepath.Join(dir, f))
 		switch {
 		case err != nil || isBinary(data):
 		case len(data) <= budget/4 && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", f, strings.TrimRight(string(data), "\n"))):
 			snap.Included++
+			whole = append(whole, f)
 		default:
 			add(fmt.Sprintf("<file path=%q>%s, %d lines: too large to include; look up the parts you need</file>\n", f, size(len(data)), bytes.Count(data, []byte{'\n'})+1))
 		}
@@ -236,9 +259,14 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 	for _, f := range files {
 		addFile(f)
 	}
-	var tests []string
+	var tests, defined []string
+	var namedDefs []tools.Definition
 	for _, name := range names {
 		defs := tools.FindDefinitions(ctx, dir, name)
+		if len(defs) > 0 {
+			defined = append(defined, name)
+			namedDefs = append(namedDefs, defs...)
+		}
 		for _, d := range defs {
 			// A small file holding the named code is worth showing whole:
 			// the model reads it first anyway.
@@ -247,6 +275,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 				if err == nil && len(data) <= wholeFileMax && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", d.Path, strings.TrimRight(string(data), "\n"))) {
 					snap.Included++
 					shown = append(shown, d.Path)
+					whole = append(whole, d.Path)
 				} else {
 					add(fmt.Sprintf("<definition name=%q>\n%s\n</definition>\n", name, d.String()))
 				}
@@ -271,13 +300,22 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		shown = append(shown, t)
 		addFile(t)
 	}
-	if pick != nil {
-		prefetch(ctx, dir, paths, shown, request, pick, add, &snap)
+	<-parsed
+	if len(units) > 0 {
+		snap.Related = related(units, defined, namedDefs, whole, paths, add)
+	}
+	if opts.Pick != nil {
+		prefetch(ctx, dir, paths, shown, request, opts.Pick, add, &snap)
 	}
 
 	var b strings.Builder
 	also := ""
-	if len(snap.Prefetched) > 0 {
+	switch {
+	case len(snap.Related) > 0 && len(snap.Prefetched) > 0:
+		also = ", the code around it, and the other files it most likely needs"
+	case len(snap.Related) > 0:
+		also = ", and the code around it"
+	case len(snap.Prefetched) > 0:
 		also = ", and the other files it most likely needs"
 	}
 	fmt.Fprintf(&b, "<repository_snapshot>\nTaken just before this message. The repository is too large to include in full (%d files, %s), so this lists every file and shows the code the request names%s. Look up anything else you need.\n\n", len(paths), size(total), also)
@@ -409,4 +447,157 @@ func prefetch(ctx context.Context, dir string, paths, shown []string, request st
 			snap.Prefetched = append(snap.Prefetched, p)
 		}
 	}
+}
+
+const (
+	// relatedMax is the most text the code around the named code may add,
+	// and relatedUnitMax the largest single unit it adds.
+	relatedMax     = 16 << 10
+	relatedUnitMax = 6 << 10
+)
+
+// calledName matches a name followed by an opening parenthesis: a call.
+var calledName = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+
+// related adds the units of code around the named code that agents looked
+// up most often when they weren't shown (decision 0014). In priority order:
+// the tests that use a named definition, its other declarations (a type
+// stub, say), the definitions it calls, the helpers the tests beside it
+// rely on (one step further into each helper's file), and the units in its
+// own file that use it. Uses in other files are left to the uses list: for
+// a rename, the use lines are enough. Units in files shown whole, and the
+// named definitions themselves, are skipped.
+func related(units []tools.Unit, names []string, defs []tools.Definition, whole, paths []string, add func(string) bool) []string {
+	byName := map[string][]int{}
+	refs := make([]map[string]bool, len(units))
+	for i, u := range units {
+		if u.Name != "" {
+			byName[u.Name] = append(byName[u.Name], i)
+		}
+		refs[i] = tools.Referenced(u.Text)
+	}
+	covered := func(u tools.Unit) bool {
+		if slices.Contains(whole, u.Path) {
+			return true
+		}
+		for _, d := range defs {
+			if d.Path == u.Path && d.StartLine <= u.End && d.StartLine+strings.Count(d.Source, "\n") >= u.Start {
+				return true
+			}
+		}
+		return false
+	}
+	type pick struct {
+		i   int
+		why string
+	}
+	// testOnly is 1 for a unit whose name only tests use, outside its own
+	// file: a test utility, the thing a new test most needs to know.
+	usedBy := map[string][]int{}
+	for i := range units {
+		for w := range refs[i] {
+			usedBy[w] = append(usedBy[w], i)
+		}
+	}
+	testOnly := func(j int) int {
+		n := units[j].Name
+		if n == "" {
+			return 0
+		}
+		any := false
+		for _, i := range usedBy[n] {
+			switch {
+			case units[i].Path == units[j].Path:
+			case !tools.IsTestFile(units[i].Path):
+				return 0
+			default:
+				any = true
+			}
+		}
+		if any {
+			return 1
+		}
+		return 0
+	}
+	var tests, decls, callees, helpers, local []pick
+	seen := map[int]bool{}
+	take := func(list *[]pick, i int, why string) {
+		if !seen[i] && !covered(units[i]) && len(units[i].Text) <= relatedUnitMax {
+			seen[i] = true
+			*list = append(*list, pick{i, why})
+		}
+	}
+	for _, n := range names {
+		own := byName[n]
+		homes := map[string]bool{}
+		for _, i := range own {
+			homes[units[i].Path] = true
+		}
+		for i, u := range units {
+			switch {
+			case u.Name == n:
+				take(&decls, i, "declares "+n)
+			case !refs[i][n]:
+			case tools.IsTestFile(u.Path):
+				take(&tests, i, "tests "+n)
+			case homes[u.Path]:
+				take(&local, i, "uses "+n)
+			}
+		}
+		for _, i := range own {
+			for _, m := range calledName.FindAllStringSubmatch(units[i].Text, -1) {
+				if m[1] != n {
+					for _, j := range byName[m[1]] {
+						take(&callees, j, "called by "+n)
+					}
+				}
+			}
+			// Helpers rank by how many of the sibling tests use them: a
+			// shared test utility is used by nearly every test, setup code
+			// by one.
+			home := filepath.Dir(units[i].Path)
+			count := map[int]int{}
+			for _, t := range siblingTests(units[i].Path, paths) {
+				for k, tu := range units {
+					if tu.Path != t {
+						continue
+					}
+					for w := range refs[k] {
+						for _, j := range byName[w] {
+							if h := units[j]; !tools.IsTestFile(h.Path) && filepath.Dir(h.Path) != home {
+								count[j]++
+							}
+						}
+					}
+				}
+			}
+			direct := slices.SortedFunc(maps.Keys(count), func(a, b int) int {
+				return cmp.Or(testOnly(b)-testOnly(a), count[b]-count[a], a-b)
+			})
+			for _, j := range direct {
+				take(&helpers, j, "used by the tests of "+n)
+			}
+			for _, j := range direct {
+				for _, w := range slices.Sorted(maps.Keys(refs[j])) {
+					for _, l := range byName[w] {
+						if units[l].Path == units[j].Path {
+							take(&helpers, l, "used by the tests of "+n)
+						}
+					}
+				}
+			}
+		}
+	}
+	var out []string
+	total := 0
+	for _, p := range slices.Concat(tests, decls, callees, helpers, local) {
+		u := units[p.i]
+		block := fmt.Sprintf("<code path=%q lines=\"%d-%d\" why=%q>\n%s\n</code>\n", u.Path, u.Start, u.End, p.why, strings.TrimRight(u.Text, "\n"))
+		if total+len(block) > relatedMax || !add(block) {
+			continue
+		}
+		total += len(block)
+		out = append(out, fmt.Sprintf("%s:%d-%d", u.Path, u.Start, u.End))
+	}
+	return out
 }

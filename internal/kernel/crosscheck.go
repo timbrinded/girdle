@@ -165,7 +165,7 @@ func (s *Session) runCrossCheck(ctx context.Context) string {
 		}
 		written = append(written, full)
 	}
-	out, code, ok := tools.RunCheck(ctx, s.cfg.Dir, cc.check)
+	out, code, ok := tools.RunCheck(ctx, s.cfg.Dir, cc.check, s.shellGuard())
 	meta := map[string]string{"files": strings.Join(paths, ", "), "check": cc.check}
 	if ok && code == 0 {
 		s.emit(Event{Type: EventCrossCheck, Reason: "passed", Text: clipMiddle(out, 4000), Meta: meta})

@@ -9,7 +9,9 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"maps"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -65,6 +67,10 @@ type Config struct {
 	// Prefetch asks Jev, for a repository too large to snapshot whole,
 	// which other files the request needs, and adds them. It needs Snapshot.
 	Prefetch bool
+	// Structure adds, for a repository too large to snapshot whole, the
+	// code around the named code, found by parsing with ast-grep. It needs
+	// Snapshot.
+	Structure bool
 	// Batch asks the LLM to make all its edits and run the checks in one
 	// step, since every extra step costs seconds of latency.
 	Batch bool
@@ -98,6 +104,13 @@ type Config struct {
 	// Reproduce lets apply check that a bug fix's regression test fails
 	// without the fix. It needs Batch.
 	Reproduce bool
+	// Leftovers asks Jev which names and files the request wants gone, and
+	// before the run stops, checks that none of them remain.
+	Leftovers bool
+	// Tripwire checks every shell command before it runs and blocks the
+	// catastrophic ones, handing the run back to the user.
+	Tripwire       bool
+	TripwirePolicy checkpoint.TripwirePolicy
 }
 
 // Session is one conversation in one working directory.
@@ -144,6 +157,13 @@ type Session struct {
 	// check's output, for the step-end fan-out.
 	changeLog []string
 	lastOut   string
+	// tripped is why the tripwire blocked a command in this request.
+	tripped string
+	// intent delivers what the request wants gone; leftoverNudges counts
+	// the times it was found still there.
+	intent         chan checkpoint.Intent
+	gone           *checkpoint.Intent
+	leftoverNudges int
 }
 
 // NewSession builds a session with the four built-in tools.
@@ -151,9 +171,10 @@ func NewSession(cfg Config) *Session {
 	if cfg.MaxStepsPerTurn == 0 {
 		cfg.MaxStepsPerTurn = 60
 	}
-	s := &Session{ID: uuid.New().String(), cfg: cfg, tools: tools.All(cfg.Dir), edited: map[string]bool{}}
+	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
+	s.tools = tools.All(cfg.Dir, s.shellGuard())
 	if cfg.Batch {
-		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce)
+		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.shellGuard())
 	}
 	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
 	s.agent = fantasy.NewAgent(
@@ -178,8 +199,11 @@ func NewSession(cfg Config) *Session {
 		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
 		"compact":     fmt.Sprint(cfg.Compact),
 		"prefetch":    fmt.Sprint(cfg.Prefetch),
+		"structure":   fmt.Sprint(cfg.Structure),
 		"stepfan":     fmt.Sprint(cfg.StepPolicy.Fanout),
 		"reproduce":   fmt.Sprint(cfg.Reproduce),
+		"tripwire":    fmt.Sprint(cfg.Tripwire),
+		"leftovers":   fmt.Sprint(cfg.Leftovers),
 	}})
 	return s
 }
@@ -233,7 +257,8 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			}
 		}
 		wg.Go(func() {
-			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
+			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt,
+				SnapshotOptions{Pick: pick, Related: s.cfg.Structure})
 		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
@@ -251,6 +276,9 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		meta := map[string]string{
 			"files": fmt.Sprint(snap.Files), "included": fmt.Sprint(snap.Included), "bytes": fmt.Sprint(snap.Bytes),
 		}
+		if len(snap.Related) > 0 {
+			meta["related"] = strings.Join(snap.Related, ",")
+		}
 		if snap.Candidates > 0 {
 			s.addUsage(Usage{JevTokens: snap.Prefetch.InputTokens})
 			meta["prefetched"] = strings.Join(snap.Prefetched, ",")
@@ -262,6 +290,15 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		msg = snap.Text + "\n\n" + prompt
 	}
 	s.history = append(s.history, fantasy.NewUserMessage(msg))
+	if s.cfg.Leftovers && s.cfg.Jev != nil {
+		intent := make(chan checkpoint.Intent, 1)
+		s.intent = intent
+		files, names := NamedCode(prompt, func(p string) bool {
+			info, err := os.Stat(filepath.Join(s.cfg.Dir, p))
+			return err == nil && !info.IsDir()
+		})
+		go func() { intent <- checkpoint.AskIntent(ctx, s.cfg.Jev, prompt, names, files) }()
+	}
 	s.cross = nil
 	if s.crossCheckOn() {
 		s.startCrossCheck(ctx)
@@ -280,6 +317,8 @@ func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
 	s.testsEdited, s.testsAsked = false, 0
 	s.changeLog, s.lastOut = nil, ""
+	s.tripped = ""
+	s.intent, s.gone, s.leftoverNudges = nil, nil, 0
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
 }
@@ -321,6 +360,10 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 				s.emit(Event{Type: EventError, Text: err.Error()})
 				return s.end(OutcomeError, err.Error())
 			}
+			if why := s.tripped; why != "" {
+				s.tripped = ""
+				return s.end(OutcomeNeedsUser, "tripwire: "+why)
+			}
 			if early {
 				return s.finishEarly()
 			}
@@ -337,6 +380,14 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 				return s.end(OutcomeNeedsUser, "blocked")
 			}
 			lastText = text
+			// A turn that ends by itself is checked for leftovers too.
+			if len(s.edited) > 0 {
+				if fb := s.leftovers(ctx); fb != "" {
+					s.emit(Event{Type: EventNudge, Text: fb, Reason: "leftovers"})
+					s.history = append(s.history, fantasy.NewUserMessage(fb))
+					continue
+				}
+			}
 		}
 		callLLM = true
 
@@ -371,7 +422,11 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 func (s *Session) turn(ctx context.Context, task string, requirements []string) (text string, early bool, err error) {
 	calls := map[string]fantasy.ToolCallContent{}
 
-	stopWhen := []fantasy.StopCondition{fantasy.StepCountIs(s.cfg.MaxStepsPerTurn)}
+	stopWhen := []fantasy.StopCondition{
+		fantasy.StepCountIs(s.cfg.MaxStepsPerTurn),
+		// A blocked command hands the run back to the user at once.
+		func([]fantasy.StepResult) bool { return s.tripped != "" },
+	}
 	if s.cfg.Heartbeat && s.cfg.Checkpoints && s.cfg.Jev != nil {
 		stopWhen = append(stopWhen, func(steps []fantasy.StepResult) bool {
 			if len(steps[len(steps)-1].Content.ToolCalls()) == 0 {
@@ -393,6 +448,12 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			if s.cross != nil && s.lastOK && len(s.edited) > 0 {
 				if fb := s.runCrossCheck(ctx); fb != "" {
 					s.pending, s.pendingWhy = fb, "crosscheck"
+					return true
+				}
+			}
+			if s.lastOK && len(s.edited) > 0 {
+				if fb := s.leftovers(ctx); fb != "" {
+					s.pending, s.pendingWhy = fb, "leftovers"
 					return true
 				}
 			}
@@ -814,4 +875,94 @@ func renderChange(c tools.Change) string {
 			"\n+ " + strings.ReplaceAll(clipMiddle(c.NewText, 1500), "\n", "\n+ ")
 	}
 	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
+}
+
+// shellGuard returns the tripwire as the tools' guard, or nil when it's off.
+func (s *Session) shellGuard() tools.Guard {
+	if !s.cfg.Tripwire {
+		return nil
+	}
+	return s.guard
+}
+
+// guard is the tripwire: it reads a command's facts, blocks what the hard
+// floor forbids, runs at once what shows no deleting, pushing or sending,
+// and asks Jev about the rest. A block ends the turn and hands the run to
+// the user (decision 0014).
+func (s *Session) guard(ctx context.Context, command string) string {
+	home, _ := os.UserHomeDir()
+	state := checkpoint.TripwireState{Command: clipMiddle(command, 4000), ProjectDir: s.cfg.Dir, HomeDir: home, Task: clipMiddle(s.task, 2000)}
+	f, err := tools.ReadShell(ctx, command, s.cfg.Dir, home)
+	if err == nil {
+		state.Facts = f
+		if why := f.Floor(); why != "" {
+			d := checkpoint.TripwireDecision{Action: "block", Rule: "floor", Why: why, State: state}
+			s.emit(Event{Type: EventTripwire, Tripwire: &d})
+			s.tripped = why
+			return why
+		}
+		if !f.NeedsJudgement() {
+			return ""
+		}
+	}
+	// Without the parse (no ast-grep), every command is judged.
+	d := checkpoint.Tripwire(ctx, s.cfg.Jev, state, s.cfg.TripwirePolicy)
+	s.addUsage(Usage{JevTokens: d.InputTokens})
+	s.emit(Event{Type: EventTripwire, Tripwire: &d})
+	if d.Action == "block" {
+		s.tripped = d.Why
+		return d.Why
+	}
+	return ""
+}
+
+// maxLeftoverNudges bounds how often one request is sent back for
+// leftovers, so a disagreement can't loop.
+const maxLeftoverNudges = 2
+
+// leftovers returns a nudge when a name the request wants gone still
+// appears where it must change, or a file it wants pruned still defines
+// functions nothing uses. It returns "" when there's nothing to say.
+func (s *Session) leftovers(ctx context.Context) string {
+	if s.intent == nil || s.leftoverNudges >= maxLeftoverNudges {
+		return ""
+	}
+	if s.gone == nil {
+		select {
+		case in := <-s.intent:
+			s.gone = &in
+			s.addUsage(Usage{JevTokens: in.Tokens})
+			s.emit(Event{Type: EventLeftovers, Reason: "intent", Meta: map[string]string{
+				"gone": strings.Join(in.Gone, ","), "prune": strings.Join(in.Prune, ","), "latency_ms": fmt.Sprint(in.LatencyMS),
+			}})
+		case <-ctx.Done():
+			return ""
+		}
+	}
+	var b strings.Builder
+	var found []string
+	for _, n := range s.gone.Gone {
+		mentions := tools.Mentions(ctx, s.cfg.Dir, n, 20)
+		if len(mentions) == 0 {
+			continue
+		}
+		must, tokens := checkpoint.MustChange(ctx, s.cfg.Jev, s.task, n, mentions)
+		s.addUsage(Usage{JevTokens: tokens})
+		if len(must) > 0 {
+			fmt.Fprintf(&b, "`%s` still appears where the task wants it gone:\n%s\n", n, strings.Join(must, "\n"))
+			found = append(found, n)
+		}
+	}
+	for _, f := range s.gone.Prune {
+		if unused := tools.UnusedDefs(ctx, s.cfg.Dir, f); len(unused) > 0 {
+			fmt.Fprintf(&b, "%s still defines functions that no code uses: %s\n", f, strings.Join(unused, ", "))
+			found = append(found, f)
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	s.leftoverNudges++
+	s.emit(Event{Type: EventLeftovers, Reason: "found", Meta: map[string]string{"found": strings.Join(found, ",")}})
+	return "[Girdle] Not done yet.\n" + b.String() + "Change these, then run the check again."
 }

@@ -6,7 +6,7 @@ The LLM decides and does the work. [Jev](https://docs.typesafe.ai), a calibrated
 
 ## Try it
 
-Girdle needs `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY` in the environment.
+Girdle needs `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY` in the environment, and works best with [ast-grep](https://ast-grep.github.io) installed (`brew install ast-grep`). Girdle uses it to parse code and shell commands.
 
 ```bash
 go build -o bin/girdle ./cmd/girdle
@@ -16,7 +16,9 @@ bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it
 
 Useful flags: `-C dir`, `-model`, `-reasoning`, `-json` (headless events as JSON lines), `-no-checkpoints` (turn Jev off), `-log path`.
 
-`-fast` turns on the fast flow, which finishes most tasks in one LLM step. The repository's files go out with the request. One `apply` call makes every change and runs a check. For a large repository, Jev also picks the other files the request will need, one isolated question per file, and they go out too. Jev ends the run as soon as the check's result shows the task done, reading the changes and the check's output with a broad set of questions. Each LLM call is raced three times, and the first call starts before routing finishes. Alongside the main call, a second call writes an independent test from the task's words, and Girdle runs it once the agent's own check passes. In warm, daily-use conditions it is twice as fast as the default flow on both benchmark suites, at the same pass rate. See [research/06](research/06-optimisation-stage-summary.md) for the summary, and decisions [0005](docs/decisions/0005-fast-flow.md) to [0013](docs/decisions/0013-jev-fan-out.md) for the detail. Any part of `-fast` can be left out by setting its flag to false, for example `-fast -crosscheck=false`.
+Every shell command passes a tripwire first. ast-grep parses the command, and code blocks what can never be allowed: recursive deletes outside the project, force-pushes to a shared branch, and secrets sent off the machine. Commands that delete, push and send nothing run at once. Jev judges the rest. A blocked command hands the run back to you. `-tripwire=false` turns it off. See [decision 0014](docs/decisions/0014-ast-grep-with-jev.md).
+
+`-fast` turns on the fast flow, which finishes most tasks in one LLM step. The repository's files go out with the request. One `apply` call makes every change and runs a check. For a large repository, Jev also picks the other files the request will need, one isolated question per file, and they go out too. Jev ends the run as soon as the check's result shows the task done, reading the changes and the check's output with a broad set of questions. When a request renames or removes something, Girdle doesn't stop while the old name still appears where it must change. Each LLM call is raced three times, and the first call starts before routing finishes. Alongside the main call, a second call writes an independent test from the task's words, and Girdle runs it once the agent's own check passes. In warm, daily-use conditions it is twice as fast as the default flow on both benchmark suites, at the same pass rate. See [research/06](research/06-optimisation-stage-summary.md) for the summary, and decisions [0005](docs/decisions/0005-fast-flow.md) to [0013](docs/decisions/0013-jev-fan-out.md) for the detail. Any part of `-fast` can be left out by setting its flag to false, for example `-fast -crosscheck=false`.
 
 Every session writes an event log, including each Jev decision, to `~/.local/state/girdle/sessions/`.
 

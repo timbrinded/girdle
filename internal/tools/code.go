@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -90,6 +91,14 @@ func Search(ctx context.Context, dir, pattern, path, glob string, ignoreCase boo
 
 	var b strings.Builder
 	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	// ripgrep searches files in parallel, so its order varies from run to
+	// run. Sorting by file and line keeps results, and any prompt that
+	// carries them, the same each time.
+	slices.SortStableFunc(lines, func(a, b string) int {
+		fa, ra, _ := strings.Cut(a, ":")
+		fb, rb, _ := strings.Cut(b, ":")
+		return cmp.Or(cmp.Compare(fa, fb), cmp.Compare(leadingInt(ra), leadingInt(rb)))
+	})
 	last := ""
 	for i, line := range lines {
 		if i == maxSearchMatches {
@@ -316,3 +325,15 @@ func clipLine(s string) string {
 }
 
 func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
+
+// leadingInt reads the number at the start of s, or 0.
+func leadingInt(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}

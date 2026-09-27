@@ -96,7 +96,7 @@ func (t toolset) reproduce(ctx context.Context, cmd string) (note string, weak b
 	}
 	t.orig.mu.Unlock()
 
-	out, code, ok := RunCheck(ctx, t.dir, cmd)
+	out, code, ok := t.runCheck(ctx, cmd)
 	switch {
 	case !ok:
 		return "[Girdle] reproduce could not be run: " + clipTail(out, 400), false

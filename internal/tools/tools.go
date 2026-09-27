@@ -27,9 +27,14 @@ const (
 	maxTimeout     = 600 * time.Second
 )
 
-// All returns the built-in tools bound to dir.
-func All(dir string) []fantasy.AgentTool {
-	t := toolset{dir: dir}
+// Guard is asked before any shell command runs. It returns why the
+// command must not run, or "" to let it run.
+type Guard func(ctx context.Context, command string) string
+
+// All returns the built-in tools bound to dir. guard, if set, sees every
+// shell command first.
+func All(dir string, guard Guard) []fantasy.AgentTool {
+	t := toolset{dir: dir, guard: guard}
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool("read", "Read a text file. Returns up to 2000 lines starting at offset (1-based).", t.read),
 		fantasy.NewAgentTool("write", "Create or overwrite a file with the given content. Creates parent directories.", t.write),
@@ -46,6 +51,8 @@ type toolset struct {
 	// orig, when set, remembers files' contents from before the current
 	// request changed them, for apply's reproduce.
 	orig *originals
+	// guard, when set, sees every shell command before it runs.
+	guard Guard
 }
 
 func (t toolset) path(p string) string {
@@ -150,6 +157,11 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	timeout := defaultTimeout
 	if in.TimeoutSeconds > 0 {
 		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxTimeout)
+	}
+	if t.guard != nil {
+		if why := t.guard(ctx, in.Command); why != "" {
+			return fantasy.NewTextErrorResponse("[Girdle] Not run: " + why + ". Girdle never runs a command that deletes outside the project, force-pushes a shared branch, or sends secrets off the machine. If the task needs it, stop and tell the user.\n" + exitTrailer + "126]"), nil
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

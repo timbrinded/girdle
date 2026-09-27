@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"encoding/json/v2"
 	"maps"
 	"os"
 	"path/filepath"
@@ -10,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/fantasy"
+
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/tools"
 )
 
 func TestStepFanout(t *testing.T) {
@@ -72,7 +76,7 @@ func TestPrefetchAddsPickedFiles(t *testing.T) {
 		}
 		return checkpoint.Prefetch{Scores: map[string]float64{"helper.go": 0.9, "big.go": 0.8, "other.go": 0.2}}
 	}
-	snap := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", pick)
+	snap := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
 	slices.Sort(asked)
 	// big.go is too large to show whole, and a.go is already shown.
 	if !slices.Equal(asked, []string{"helper.go", "other.go"}) {
@@ -88,5 +92,135 @@ func TestPrefetchAddsPickedFiles(t *testing.T) {
 	}
 	if strings.Contains(snap.Text, "func Other()") || strings.Contains(snap.Text, "func Big()") {
 		t.Fatal("a file Jev scored low, or one too large, was added")
+	}
+}
+
+// commandModel runs one shell command, then replies.
+type commandModel struct {
+	fantasy.LanguageModel
+	command string
+}
+
+func (m commandModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	ran := false
+	for _, msg := range call.Prompt {
+		ran = ran || msg.Role == fantasy.MessageRoleTool
+	}
+	input, _ := json.Marshal(map[string]string{"command": m.command})
+	return func(yield func(fantasy.StreamPart) bool) {
+		if ran {
+			for _, p := range []fantasy.StreamPart{
+				{Type: fantasy.StreamPartTypeTextStart, ID: "t"},
+				{Type: fantasy.StreamPartTypeTextDelta, ID: "t", Delta: "Done."},
+				{Type: fantasy.StreamPartTypeTextEnd, ID: "t"},
+				{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop},
+			} {
+				if !yield(p) {
+					return
+				}
+			}
+			return
+		}
+		if yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: "c1", ToolCallName: "bash", ToolCallInput: string(input)}) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+		}
+	}, nil
+}
+
+func TestTripwireHandsBackToTheUser(t *testing.T) {
+	if !tools.HaveAstGrep() {
+		t.Skip("ast-grep is not installed")
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	for _, tc := range []struct {
+		name, command string
+		blocked       bool
+	}{
+		{"catastrophic", "rm -rf /nonexistent-girdle-tripwire-test/* && touch " + marker, true},
+		{"ordinary", "touch " + marker, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = os.Remove(marker)
+			var trips []Event
+			s := NewSession(Config{
+				Model: commandModel{command: tc.command}, ModelName: "cmd", Dir: t.TempDir(), Tripwire: true,
+				Emit: func(e Event) {
+					if e.Type == EventTripwire {
+						trips = append(trips, e)
+					}
+				},
+			})
+			outcome, reason := s.Run(t.Context(), "Tidy up.")
+			_, err := os.Stat(marker)
+			ran := err == nil
+			if tc.blocked {
+				if outcome != OutcomeNeedsUser || !strings.HasPrefix(reason, "tripwire") || ran || len(trips) != 1 || trips[0].Tripwire.Rule != "floor" {
+					t.Fatalf("Run = %s %q, ran %v, trips %d", outcome, reason, ran, len(trips))
+				}
+				return
+			}
+			if outcome != OutcomeDone || !ran || len(trips) != 0 {
+				t.Fatalf("Run = %s %q, ran %v, trips %d", outcome, reason, ran, len(trips))
+			}
+		})
+	}
+}
+
+func TestRelatedCode(t *testing.T) {
+	if !tools.HaveAstGrep() {
+		t.Skip("ast-grep is not installed")
+	}
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod":           "module example.com/p\n\ngo 1.24\n",
+		"a.go":             "package p\n\n// Foo does the thing.\nfunc Foo() int { return helperBar() + 1 }\n",
+		"c.go":             "package p\n\n// helperBar is what Foo builds on.\nfunc helperBar() int { return 41 }\n",
+		"other.go":         "package p\n\nfunc Unrelated() {}\n",
+		"a_test.go":        "package p\n\nimport (\n\t\"testing\"\n\n\t\"example.com/p/testutil\"\n)\n\nfunc TestFoo(t *testing.T) { testutil.Check(t, Foo() == 42) }\n",
+		"testutil/util.go": "package testutil\n\nimport \"testing\"\n\n// Check fails t unless ok.\nfunc Check(t *testing.T, ok bool) {\n\tif !ok {\n\t\tt.Fatal(\"check failed\")\n\t}\n}\n",
+		"data.txt":         strings.Repeat("filler line\n", 2000),
+	})
+	snap := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Related: true})
+	joined := strings.Join(snap.Related, " ")
+	for _, want := range []string{"c.go:3-4", "testutil/util.go:5-10"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("related %v lacks %s", snap.Related, want)
+		}
+	}
+	if strings.Contains(joined, "other.go") {
+		t.Fatalf("related %v includes unrelated code", snap.Related)
+	}
+	for _, want := range []string{`why="called by Foo"`, `why="used by the tests of Foo"`, "// helperBar is what Foo builds on."} {
+		if !strings.Contains(snap.Text, want) {
+			t.Fatalf("snapshot lacks %q:\n%s", want, snap.Text)
+		}
+	}
+}
+
+func TestLeftoversNudge(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"a.txt": "old\n", "b.txt": "still old here\n"})
+	var leftovers, nudges []Event
+	s := NewSession(Config{
+		Model: scriptedModel{}, ModelName: "scripted", Jev: fakeJev(t), Dir: dir,
+		Policy: checkpoint.DefaultPolicy, Checkpoints: true, Batch: true, Leftovers: true,
+		Emit: func(e Event) {
+			switch {
+			case e.Type == EventLeftovers && e.Reason == "found":
+				leftovers = append(leftovers, e)
+			case e.Type == EventNudge && e.Reason == "leftovers":
+				nudges = append(nudges, e)
+			}
+		},
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	// The scripted model only changes a.txt, so b.txt keeps the old name.
+	s.Run(ctx, "Rename `old` to `new` everywhere.")
+	if len(leftovers) == 0 || len(nudges) == 0 || !strings.Contains(nudges[0].Text, "b.txt:1") {
+		t.Fatalf("leftovers %v, nudges %v", leftovers, nudges)
+	}
+	if len(leftovers) > maxLeftoverNudges {
+		t.Fatalf("%d leftover nudges, want at most %d", len(leftovers), maxLeftoverNudges)
 	}
 }

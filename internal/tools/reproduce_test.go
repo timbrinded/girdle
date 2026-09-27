@@ -11,7 +11,7 @@ import (
 
 func applyTool(t *testing.T, dir string) (fantasy.AgentTool, func()) {
 	t.Helper()
-	ts, reset := BatchedWithReset(dir, true)
+	ts, reset := BatchedWithReset(dir, true, nil)
 	for _, tool := range ts {
 		if tool.Info().Name == "apply" {
 			return tool, reset
