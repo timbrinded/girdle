@@ -1,0 +1,178 @@
+diff --git a/expr_test.go b/expr_test.go
+index ba1f001..28b2c54 100644
+--- a/expr_test.go
++++ b/expr_test.go
+@@ -70,6 +70,19 @@ func ExampleCompile() {
+ 	// Output: true
+ }
+ 
++func ExampleEval_bytes_literal() {
++	// Bytes literal returns []byte.
++	output, err := expr.Eval(`b"abc"`, nil)
++	if err != nil {
++		fmt.Printf("%v", err)
++		return
++	}
++
++	fmt.Printf("%v", output)
++
++	// Output: [97 98 99]
++}
++
+ func TestDisableIfOperator_AllowsIfFunction(t *testing.T) {
+ 	env := map[string]any{
+ 		"if": func(x int) int { return x + 1 },
+@@ -2929,3 +2942,60 @@ func TestDisableShortCircuit(t *testing.T) {
+ 	assert.Equal(t, 3, count)
+ 	assert.True(t, got.(bool))
+ }
++
++func TestBytesLiteral(t *testing.T) {
++	tests := []struct {
++		code string
++		want []byte
++	}{
++		{`b"hello"`, []byte("hello")},
++		{`b'world'`, []byte("world")},
++		{`b""`, []byte{}},
++		{`b'\x00\xff'`, []byte{0, 255}},
++		{`b"\x41\x42\x43"`, []byte("ABC")},
++		{`b'\101\102\103'`, []byte("ABC")},
++		{`b'\n\t\r'`, []byte{'\n', '\t', '\r'}},
++		{`b'hello\x00world'`, []byte("hello\x00world")},
++		{`b"ÿ"`, []byte{0xc3, 0xbf}}, // UTF-8 encoding of ÿ
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.code, func(t *testing.T) {
++			program, err := expr.Compile(tt.code)
++			require.NoError(t, err)
++
++			output, err := expr.Run(program, nil)
++			require.NoError(t, err)
++			assert.Equal(t, tt.want, output)
++		})
++	}
++}
++
++func TestBytesLiteral_type(t *testing.T) {
++	env := map[string]any{
++		"data": []byte("test"),
++	}
++
++	// Verify bytes literal has []byte type and can be compared with []byte
++	program, err := expr.Compile(`data == b"test"`, expr.Env(env))
++	require.NoError(t, err)
++
++	output, err := expr.Run(program, env)
++	require.NoError(t, err)
++	assert.Equal(t, true, output)
++}
++
++func TestBytesLiteral_errors(t *testing.T) {
++	// \u and \U escapes should not be allowed in bytes literals
++	errorCases := []string{
++		`b'\u0041'`,
++		`b"\U00000041"`,
++	}
++
++	for _, code := range errorCases {
++		t.Run(code, func(t *testing.T) {
++			_, err := expr.Compile(code)
++			require.Error(t, err)
++		})
++	}
++}
+diff --git a/parser/lexer/lexer_test.go b/parser/lexer/lexer_test.go
+index f46870e..6212d06 100644
+--- a/parser/lexer/lexer_test.go
++++ b/parser/lexer/lexer_test.go
+@@ -299,6 +299,52 @@ func TestLex(t *testing.T) {
+ 				{Kind: EOF},
+ 			},
+ 		},
++		{
++			`b"hello" b'world'`,
++			[]Token{
++				{Kind: Bytes, Value: "hello"},
++				{Kind: Bytes, Value: "world"},
++				{Kind: EOF},
++			},
++		},
++		{
++			`b"\x00\xff" b'\x41\x42\x43'`,
++			[]Token{
++				{Kind: Bytes, Value: "\x00\xff"},
++				{Kind: Bytes, Value: "ABC"},
++				{Kind: EOF},
++			},
++		},
++		{
++			`b"\101\102\103" b'\n\t\r'`,
++			[]Token{
++				{Kind: Bytes, Value: "ABC"},
++				{Kind: Bytes, Value: "\n\t\r"},
++				{Kind: EOF},
++			},
++		},
++		{
++			`b""`,
++			[]Token{
++				{Kind: Bytes, Value: ""},
++				{Kind: EOF},
++			},
++		},
++		{
++			`B"hello" B'world'`,
++			[]Token{
++				{Kind: Bytes, Value: "hello"},
++				{Kind: Bytes, Value: "world"},
++				{Kind: EOF},
++			},
++		},
++		{
++			`b"ÿ"`,
++			[]Token{
++				{Kind: Bytes, Value: "\xc3\xbf"},
++				{Kind: EOF},
++			},
++		},
+ 	}
+ 
+ 	for _, test := range tests {
+@@ -380,6 +426,16 @@ früh ♥︎
+ unrecognized character: U+2665 '♥' (1:6)
+  | früh ♥︎
+  | .....^
++
++b"\u0041"
++unable to unescape string (1:9)
++ | b"\u0041"
++ | ........^
++
++b'\U00000041'
++unable to unescape string (1:13)
++ | b'\U00000041'
++ | ............^
+ `
+ 
+ func TestLex_error(t *testing.T) {
+diff --git a/parser/parser_test.go b/parser/parser_test.go
+index 85c4657..963a230 100644
+--- a/parser/parser_test.go
++++ b/parser/parser_test.go
+@@ -87,6 +87,14 @@ world`},
+ 			"nil",
+ 			&NilNode{},
+ 		},
++		{
++			`b"hello"`,
++			&BytesNode{Value: []byte("hello")},
++		},
++		{
++			`b'\xff\x00'`,
++			&BytesNode{Value: []byte{255, 0}},
++		},
+ 		{
+ 			"-3",
+ 			&UnaryNode{Operator: "-",

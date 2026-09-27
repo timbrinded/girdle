@@ -1,0 +1,35 @@
+diff --git a/internal/toml-test/tests/valid/string/multiline.json b/internal/toml-test/tests/valid/string/multiline.json
+index 66e572b..bb0c47b 100644
+--- a/internal/toml-test/tests/valid/string/multiline.json
++++ b/internal/toml-test/tests/valid/string/multiline.json
+@@ -50,5 +50,9 @@
+   "whitespace-after-bs": {
+     "type": "string",
+     "value": "The quick brown fox jumps over the lazy dog."
++  },
++  "only-ignore-first": {
++    "type": "string",
++    "value": "Here are two\nlines of text.\nAnd another\n  two.\n"
+   }
+ }
+diff --git a/internal/toml-test/tests/valid/string/multiline.toml b/internal/toml-test/tests/valid/string/multiline.toml
+index f3b3c2e..4f2fd00 100644
+--- a/internal/toml-test/tests/valid/string/multiline.toml
++++ b/internal/toml-test/tests/valid/string/multiline.toml
+@@ -35,6 +35,16 @@ whitespace-after-bs = """\
+        the lazy dog.\	
+        """
+ 
++only-ignore-first = """
++Here are \
++  two
++lines of text.
++And \
++
++  another
++  two.
++"""
++
+ no-space = """a\
+     b"""
+ 

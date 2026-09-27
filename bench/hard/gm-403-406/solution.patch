@@ -1,0 +1,68 @@
+diff --git a/parser/raw_html.go b/parser/raw_html.go
+index 55b9a99..cae88a6 100644
+--- a/parser/raw_html.go
++++ b/parser/raw_html.go
+@@ -48,10 +48,10 @@ func (s *rawHTMLParser) Parse(parent ast.Node, block text.Reader, pc Context) as
+ }
+ 
+ var tagnamePattern = `([A-Za-z][A-Za-z0-9-]*)`
+-
++var spaceOrOneNewline = `(?:[ \t]|(?:\r\n|\n){0,1})`
+ var attributePattern = `(?:[\r\n \t]+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:[\r\n \t]*=[\r\n \t]*(?:[^\"'=<>` + "`" + `\x00-\x20]+|'[^']*'|"[^"]*"))?)`
+-var openTagRegexp = regexp.MustCompile("^<" + tagnamePattern + attributePattern + `*[ \t]*/?>`)
+-var closeTagRegexp = regexp.MustCompile("^</" + tagnamePattern + `\s*>`)
++var openTagRegexp = regexp.MustCompile("^<" + tagnamePattern + attributePattern + `*` + spaceOrOneNewline + `*/?>`)
++var closeTagRegexp = regexp.MustCompile("^</" + tagnamePattern + spaceOrOneNewline + `*>`)
+ 
+ var openProcessingInstruction = []byte("<?")
+ var closeProcessingInstruction = []byte("?>")
+diff --git a/renderer/html/html.go b/renderer/html/html.go
+index 7bf2ab8..72f7e74 100644
+--- a/renderer/html/html.go
++++ b/renderer/html/html.go
+@@ -901,20 +901,24 @@ var bVb = []byte("vbscript:")
+ var bFile = []byte("file:")
+ var bData = []byte("data:")
+ 
++func hasPrefix(s, prefix []byte) bool {
++	return len(s) >= len(prefix) && bytes.Equal(bytes.ToLower(s[0:len(prefix)]), bytes.ToLower(prefix))
++}
++
+ // IsDangerousURL returns true if the given url seems a potentially dangerous url,
+ // otherwise false.
+ func IsDangerousURL(url []byte) bool {
+-	if bytes.HasPrefix(url, bDataImage) && len(url) >= 11 {
++	if hasPrefix(url, bDataImage) && len(url) >= 11 {
+ 		v := url[11:]
+-		if bytes.HasPrefix(v, bPng) || bytes.HasPrefix(v, bGif) ||
+-			bytes.HasPrefix(v, bJpeg) || bytes.HasPrefix(v, bWebp) ||
+-			bytes.HasPrefix(v, bSvg) {
++		if hasPrefix(v, bPng) || hasPrefix(v, bGif) ||
++			hasPrefix(v, bJpeg) || hasPrefix(v, bWebp) ||
++			hasPrefix(v, bSvg) {
+ 			return false
+ 		}
+ 		return true
+ 	}
+-	return bytes.HasPrefix(url, bJs) || bytes.HasPrefix(url, bVb) ||
+-		bytes.HasPrefix(url, bFile) || bytes.HasPrefix(url, bData)
++	return hasPrefix(url, bJs) || hasPrefix(url, bVb) ||
++		hasPrefix(url, bFile) || hasPrefix(url, bData)
+ }
+ 
+ func nodeToHTMLText(n ast.Node, source []byte) []byte {
+diff --git a/text/reader.go b/text/reader.go
+index 849dbfe..d43690a 100644
+--- a/text/reader.go
++++ b/text/reader.go
+@@ -554,6 +554,10 @@ func findSubMatchReader(r Reader, reg *regexp.Regexp) [][]byte {
+ 	bs := bb.Bytes()
+ 	var result [][]byte
+ 	for i := 0; i < len(match); i += 2 {
++		if match[i] < 0 {
++			result = append(result, []byte{})
++			continue
++		}
+ 		result = append(result, bs[match[i]:match[i+1]])
+ 	}
+ 

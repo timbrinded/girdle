@@ -1,0 +1,238 @@
+diff --git a/README.md b/README.md
+index 235496e..1101d20 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,7 @@
+ TOML stands for Tom's Obvious, Minimal Language. This Go package provides a
+ reflection interface similar to Go's standard library `json` and `xml` packages.
+ 
+-Compatible with TOML version [v1.0.0](https://toml.io/en/v1.0.0).
++Compatible with TOML version [v1.1.0](https://toml.io/en/v1.1.0).
+ 
+ Documentation: https://pkg.go.dev/github.com/BurntSushi/toml
+ 
+diff --git a/lex.go b/lex.go
+index 8831eb0..9f4396a 100644
+--- a/lex.go
++++ b/lex.go
+@@ -46,14 +46,13 @@ func (p Position) String() string {
+ }
+ 
+ type lexer struct {
+-	input    string
+-	start    int
+-	pos      int
+-	line     int
+-	state    stateFn
+-	items    chan item
+-	tomlNext bool
+-	esc      bool
++	input string
++	start int
++	pos   int
++	line  int
++	state stateFn
++	items chan item
++	esc   bool
+ 
+ 	// Allow for backing up up to 4 runes. This is necessary because TOML
+ 	// contains 3-rune tokens (""" and ''').
+@@ -89,14 +88,13 @@ func (lx *lexer) nextItem() item {
+ 	}
+ }
+ 
+-func lex(input string, tomlNext bool) *lexer {
++func lex(input string) *lexer {
+ 	lx := &lexer{
+-		input:    input,
+-		state:    lexTop,
+-		items:    make(chan item, 10),
+-		stack:    make([]stateFn, 0, 10),
+-		line:     1,
+-		tomlNext: tomlNext,
++		input: input,
++		state: lexTop,
++		items: make(chan item, 10),
++		stack: make([]stateFn, 0, 10),
++		line:  1,
+ 	}
+ 	return lx
+ }
+@@ -411,7 +409,7 @@ func lexTableNameEnd(lx *lexer) stateFn {
+ // Lexes only one part, e.g. only 'a' inside 'a.b'.
+ func lexBareName(lx *lexer) stateFn {
+ 	r := lx.next()
+-	if isBareKeyChar(r, lx.tomlNext) {
++	if isBareKeyChar(r) {
+ 		return lexBareName
+ 	}
+ 	lx.backup()
+@@ -629,10 +627,7 @@ func lexInlineTableValue(lx *lexer) stateFn {
+ 	case isWhitespace(r):
+ 		return lexSkip(lx, lexInlineTableValue)
+ 	case isNL(r):
+-		if lx.tomlNext {
+-			return lexSkip(lx, lexInlineTableValue)
+-		}
+-		return lx.errorPrevLine(errLexInlineTableNL{})
++		return lexSkip(lx, lexInlineTableValue)
+ 	case r == '#':
+ 		lx.push(lexInlineTableValue)
+ 		return lexCommentStart
+@@ -654,10 +649,7 @@ func lexInlineTableValueEnd(lx *lexer) stateFn {
+ 	case isWhitespace(r):
+ 		return lexSkip(lx, lexInlineTableValueEnd)
+ 	case isNL(r):
+-		if lx.tomlNext {
+-			return lexSkip(lx, lexInlineTableValueEnd)
+-		}
+-		return lx.errorPrevLine(errLexInlineTableNL{})
++		return lexSkip(lx, lexInlineTableValueEnd)
+ 	case r == '#':
+ 		lx.push(lexInlineTableValueEnd)
+ 		return lexCommentStart
+@@ -665,10 +657,7 @@ func lexInlineTableValueEnd(lx *lexer) stateFn {
+ 		lx.ignore()
+ 		lx.skip(isWhitespace)
+ 		if lx.peek() == '}' {
+-			if lx.tomlNext {
+-				return lexInlineTableValueEnd
+-			}
+-			return lx.errorf("trailing comma not allowed in inline tables")
++			return lexInlineTableValueEnd
+ 		}
+ 		return lexInlineTableValue
+ 	case r == '}':
+@@ -856,9 +845,6 @@ func lexStringEscape(lx *lexer) stateFn {
+ 	r := lx.next()
+ 	switch r {
+ 	case 'e':
+-		if !lx.tomlNext {
+-			return lx.error(errLexEscape{r})
+-		}
+ 		fallthrough
+ 	case 'b':
+ 		fallthrough
+@@ -879,9 +865,6 @@ func lexStringEscape(lx *lexer) stateFn {
+ 	case '\\':
+ 		return lx.pop()
+ 	case 'x':
+-		if !lx.tomlNext {
+-			return lx.error(errLexEscape{r})
+-		}
+ 		return lexHexEscape
+ 	case 'u':
+ 		return lexShortUnicodeEscape
+@@ -1259,7 +1242,7 @@ func isDigit(r rune) bool  { return r >= '0' && r <= '9' }
+ func isBinary(r rune) bool { return r == '0' || r == '1' }
+ func isOctal(r rune) bool  { return r >= '0' && r <= '7' }
+ func isHex(r rune) bool    { return (r >= '0' && r <= '9') || (r|0x20 >= 'a' && r|0x20 <= 'f') }
+-func isBareKeyChar(r rune, tomlNext bool) bool {
++func isBareKeyChar(r rune) bool {
+ 	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+ 		(r >= '0' && r <= '9') || r == '_' || r == '-'
+ }
+diff --git a/parse.go b/parse.go
+index 5fc884e..b474247 100644
+--- a/parse.go
++++ b/parse.go
+@@ -3,7 +3,6 @@ package toml
+ import (
+ 	"fmt"
+ 	"math"
+-	"os"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+@@ -17,7 +16,6 @@ type parser struct {
+ 	context    Key      // Full key for the current hash in scope.
+ 	currentKey string   // Base key name for everything except hashes.
+ 	pos        Position // Current position in the TOML file.
+-	tomlNext   bool
+ 
+ 	ordered []Key // List of keys in the order that they appear in the TOML data.
+ 
+@@ -32,8 +30,6 @@ type keyInfo struct {
+ }
+ 
+ func parse(data string) (p *parser, err error) {
+-	_, tomlNext := os.LookupEnv("BURNTSUSHI_TOML_110")
+-
+ 	defer func() {
+ 		if r := recover(); r != nil {
+ 			if pErr, ok := r.(ParseError); ok {
+@@ -73,10 +69,9 @@ func parse(data string) (p *parser, err error) {
+ 	p = &parser{
+ 		keyInfo:   make(map[string]keyInfo),
+ 		mapping:   make(map[string]any),
+-		lx:        lex(data, tomlNext),
++		lx:        lex(data),
+ 		ordered:   make([]Key, 0),
+ 		implicits: make(map[string]struct{}),
+-		tomlNext:  tomlNext,
+ 	}
+ 	for {
+ 		item := p.next()
+@@ -350,17 +345,14 @@ func (p *parser) valueFloat(it item) (any, tomlType) {
+ var dtTypes = []struct {
+ 	fmt  string
+ 	zone *time.Location
+-	next bool
+ }{
+-	{time.RFC3339Nano, time.Local, false},
+-	{"2006-01-02T15:04:05.999999999", internal.LocalDatetime, false},
+-	{"2006-01-02", internal.LocalDate, false},
+-	{"15:04:05.999999999", internal.LocalTime, false},
+-
+-	// tomlNext
+-	{"2006-01-02T15:04Z07:00", time.Local, true},
+-	{"2006-01-02T15:04", internal.LocalDatetime, true},
+-	{"15:04", internal.LocalTime, true},
++	{time.RFC3339Nano, time.Local},
++	{"2006-01-02T15:04:05.999999999", internal.LocalDatetime},
++	{"2006-01-02", internal.LocalDate},
++	{"15:04:05.999999999", internal.LocalTime},
++	{"2006-01-02T15:04Z07:00", time.Local},
++	{"2006-01-02T15:04", internal.LocalDatetime},
++	{"15:04", internal.LocalTime},
+ }
+ 
+ func (p *parser) valueDatetime(it item) (any, tomlType) {
+@@ -371,9 +363,6 @@ func (p *parser) valueDatetime(it item) (any, tomlType) {
+ 		err error
+ 	)
+ 	for _, dt := range dtTypes {
+-		if dt.next && !p.tomlNext {
+-			continue
+-		}
+ 		t, err = time.ParseInLocation(dt.fmt, it.val, dt.zone)
+ 		if err == nil {
+ 			if missingLeadingZero(it.val, dt.fmt) {
+@@ -807,10 +796,8 @@ func (p *parser) replaceEscapes(it item, str string) string {
+ 			b.WriteByte(0x0d)
+ 			skip = 1
+ 		case 'e':
+-			if p.tomlNext {
+-				b.WriteByte(0x1b)
+-				skip = 1
+-			}
++			b.WriteByte(0x1b)
++			skip = 1
+ 		case '"':
+ 			b.WriteByte(0x22)
+ 			skip = 1
+@@ -820,11 +807,9 @@ func (p *parser) replaceEscapes(it item, str string) string {
+ 		// The lexer guarantees the correct number of characters are present;
+ 		// don't need to check here.
+ 		case 'x':
+-			if p.tomlNext {
+-				escaped := p.asciiEscapeToUnicode(it, str[i+2:i+4])
+-				b.WriteRune(escaped)
+-				skip = 3
+-			}
++			escaped := p.asciiEscapeToUnicode(it, str[i+2:i+4])
++			b.WriteRune(escaped)
++			skip = 3
+ 		case 'u':
+ 			escaped := p.asciiEscapeToUnicode(it, str[i+2:i+6])
+ 			b.WriteRune(escaped)

@@ -1,0 +1,239 @@
+diff --git a/README.md b/README.md
+index bb1daff..403e91c 100644
+--- a/README.md
++++ b/README.md
+@@ -88,6 +88,7 @@ See `.agent-plugins` directory for the implementation of these skills.
+   task lists, and definition lists.
+ - **Semantically clean AST** :  goldmark builds a clean AST structure that is easy to analyze and transform.
+ - **CST support** : goldmark keeps the original source information for each node, so you can write it back to Markdown format without losing less/any information. goldmark keeps which syntax was used for headings (ATX or Setext), whether `<>` was used to enclose links like `<http://example.com>`, and other such information. goldmark can distinguish between `you & me` and `you &amp; me`. Other markdown libraries only keep the decoded value, so they cannot distinguish these.
++- **CJK-friendly** : goldmark is CJK-friendly (its author is Japanese :) ). The CommonMark specification is primarily designed with Western languages in mind, and many CommonMark implementations likewise assume Western-language text, especially English.
+ - **Depends only on standard libraries.**
+ 
+ ## Installation
+@@ -260,7 +261,7 @@ if "<p>こんにちは、 <del>世界</del> 。</p>\n" != buf.String() {
+ | `html.WithUnsafe` | `-` | By default, goldmark does not render raw HTML or potentially dangerous links. With this option, goldmark renders such content as written. |
+ | `html.WithExtensions` | `[]html.Extension` | Enables parser extensions. |
+ 
+-#### Defined line break strategies
++#### Defined line break strategies <a name="defined-line-break-strategies"></a>
+ 
+ | Style | Description |
+ | ----- | ----------- |
+@@ -690,6 +691,19 @@ func NewMyNode(field string) *MyNode {
+ }
+ ```
+ 
++Inline nodes must implement `FirstRune()` and `LastRune()` correctly. These are used by [line break strategies](#defined-line-break-strategies) to determine the characters before and after a line break.
++
++Example: In the following document, the last character before the line break is "日" and the first character after the line break is "本".
++
++```markdown
++**&#x65e5;**
++[&#x672c;](http://www.example.com)
++```
++
++Note that the characters are not necessarily the same as the raw source text, because they may be represented by encoded or nested nodes.
++
++`BaseInline` provides default implementations of these methods, which assume that the inline node has `*ast.Text` children that contain the rendered text. Inline nodes that do not have `*ast.Text` children must override these methods. For example, `*ast.CodeSpan` overrides `FirstRune()` and `LastRune()` because it does not have `*ast.Text` children.
++
+ For block nodes, embed `ast.BaseBlock`. The block's raw source text (used later for inline parsing) is stored via `AppendSource` / `Source()` rather than in a plain string field.
+ 
+ ```go no-run
+diff --git a/ast/ast.go b/ast/ast.go
+index 13e67c8..091f7cf 100644
+--- a/ast/ast.go
++++ b/ast/ast.go
+@@ -168,6 +168,14 @@ type BlockNode interface {
+ type InlineNode interface {
+ 	Node
+ 	inlineNode()
++
++	// FirstRune returns the first visible rune of this node's value
++	// and true if the node has a visible rune, otherwise false.
++	FirstRune(source []byte) (rune, bool)
++
++	// LastRune returns the last visible rune of this node's value
++	// and true if the node has a visible rune, otherwise false.
++	LastRune(source []byte) (rune, bool)
+ }
+ 
+ // A BaseNode struct implements the Node interface partially.
+diff --git a/ast/inline.go b/ast/inline.go
+index 8fbdcbe..486d48c 100644
+--- a/ast/inline.go
++++ b/ast/inline.go
+@@ -16,6 +16,55 @@ type BaseInline struct {
+ // Implements InlineNode marker interface.
+ func (b *BaseInline) inlineNode() {}
+ 
++type fourByteWriter struct {
++	buf     [4]byte
++	written int
++}
++
++func (w *fourByteWriter) Write(p []byte) (n int, err error) {
++	written := 0
++	for _, b := range p {
++		if w.written >= 4 {
++			return written, fmt.Errorf("buffer overflow")
++		}
++		w.buf[w.written] = b
++		w.written++
++		written++
++	}
++	return written, nil
++}
++
++// FirstRune implements [InlineNode].FirstRune.
++func (b *BaseInline) FirstRune(source []byte) (rune, bool) {
++	for cur := b.self; cur != nil; cur = cur.FirstChild() {
++		if t, ok := cur.(*Text); ok {
++			var fbw fourByteWriter
++			_, _ = t.Value.WriteTo(&fbw, source)
++			if fbw.written == 0 {
++				return 0, false
++			}
++			return util.ToRune(fbw.buf[:], 0), true
++		}
++	}
++
++	return 0, false
++}
++
++// LastRune implements [InlineNode].LastRune.
++func (b *BaseInline) LastRune(source []byte) (rune, bool) {
++	for cur := b.self; cur != nil; cur = cur.LastChild() {
++		if t, ok := cur.(*Text); ok {
++			v := t.Value.Value(source)
++			if len(v) == 0 {
++				return 0, false
++			}
++			return util.ToRune(util.StringToReadOnlyBytes(v), len(v)-1), true
++		}
++	}
++
++	return 0, false
++}
++
+ // A Text struct represents a textual content of the Markdown text.
+ type Text struct {
+ 	BaseInline
+@@ -136,6 +185,25 @@ func (n *CodeSpan) Dump(_ []byte) *NodeDump {
+ 	})
+ }
+ 
++// FirstRune implements [InlineNode].FirstRune.
++func (n *CodeSpan) FirstRune(source []byte) (rune, bool) {
++	var fbw fourByteWriter
++	_, _ = n.Value.WriteTo(&fbw, source)
++	if fbw.written == 0 {
++		return 0, false
++	}
++	return util.ToRune(fbw.buf[:], 0), true
++}
++
++// LastRune implements [InlineNode].LastRune.
++func (n *CodeSpan) LastRune(source []byte) (rune, bool) {
++	v := n.Value.Value(source)
++	if len(v) == 0 {
++		return 0, false
++	}
++	return util.ToRune(util.StringToReadOnlyBytes(v), len(v)-1), true
++}
++
+ // KindCodeSpan is a NodeKind of the CodeSpan node.
+ var KindCodeSpan = NewNodeKind("CodeSpan")
+ 
+diff --git a/renderer/html/html.go b/renderer/html/html.go
+index 247a5d1..1883dea 100644
+--- a/renderer/html/html.go
++++ b/renderer/html/html.go
+@@ -706,33 +706,76 @@ func (e *commonMark) renderText(
+ 	w := writer.(util.BufWriter)
+ 	tw := ContextTextWriter(rc)
+ 	n := node.(*ast.Text)
+-	_, _ = n.Value.WriteTo(tw, source)
+ 	if n.HardLineBreak() || (n.SoftLineBreak() && e.config.HardWraps) {
++		_, _ = n.Value.WriteTo(tw, source)
+ 		if e.config.XHTML {
+ 			_, _ = w.WriteString("<br />\n")
+ 		} else {
+ 			_, _ = w.WriteString("<br>\n")
+ 		}
+ 	} else if n.SoftLineBreak() {
+-		if e.config.LineBreakStrategy != nil && !n.Value.IsEmpty() {
+-			sibling := node.NextSibling()
+-			if sibling != nil && sibling.Kind() == ast.KindText {
+-				if siblingText := sibling.(*ast.Text).Value.Bytes(source); len(siblingText) != 0 {
+-					value := n.Value.Bytes(source)
+-					thisLastRune := util.ToRune(value, len(value)-1)
+-					siblingFirstRune, _ := utf8.DecodeRune(siblingText)
+-					if e.config.LineBreakStrategy.SoftLineBreak(thisLastRune, siblingFirstRune) {
+-						_ = w.WriteByte('\n')
+-					}
+-				}
++		if e.config.LineBreakStrategy != nil {
++			sv := n.Value.Value(source)
++			_, _ = tw.WriteString(sv)
++
++			var last rune
++			// fast path: avoid double-decoding
++			b := util.StringToReadOnlyBytes(sv)
++			i := len(b) - 1
++			for i >= 0 && util.IsSpace(b[i]) {
++				i--
++			}
++			if i >= 0 {
++				last = util.ToRune(b, i)
++			}
++			// slow path
++			if last == 0 {
++				last, _ = lastRune(n, source)
++			}
++
++			// firstRune is optimzed to avoid decoding the whole string of the next sibling node.
++			first, _ := firstRune(n.NextSibling(), source)
++			if e.config.LineBreakStrategy.SoftLineBreak(last, first) {
++				_ = w.WriteByte('\n')
+ 			}
+ 		} else {
++			_, _ = n.Value.WriteTo(tw, source)
+ 			_ = w.WriteByte('\n')
+ 		}
++	} else {
++		_, _ = n.Value.WriteTo(tw, source)
+ 	}
+ 	return ast.WalkContinue, nil
+ }
+ 
++func lastRune(n ast.Node, source []byte) (rune, bool) {
++	for cur := n; cur != nil; cur = cur.PreviousSibling() {
++		inline, ok := cur.(ast.InlineNode)
++		if !ok {
++			break
++		}
++		r, ok := inline.LastRune(source)
++		if ok {
++			return r, true
++		}
++	}
++	return 0, false
++}
++
++func firstRune(n ast.Node, source []byte) (rune, bool) {
++	for cur := n; cur != nil; cur = cur.NextSibling() {
++		inline, ok := cur.(ast.InlineNode)
++		if !ok {
++			break
++		}
++		r, ok := inline.FirstRune(source)
++		if ok {
++			return r, true
++		}
++	}
++	return 0, false
++}
++
+ func (e *commonMark) renderTexts(w util.BufWriter, source []byte, n ast.Node, rc renderer.Context) {
+ 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+ 		if t, ok := c.(*ast.Text); ok {

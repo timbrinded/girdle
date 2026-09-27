@@ -1,0 +1,291 @@
+diff --git a/debug/go.mod b/debug/go.mod
+index dd9b17c..5dbf3d7 100644
+--- a/debug/go.mod
++++ b/debug/go.mod
+@@ -3,7 +3,9 @@ module github.com/antonmedv/expr/debug
+ go 1.13
+ 
+ require (
+-	github.com/antonmedv/expr v1.9.1-0.20221030193158-2213166cdca2
++	github.com/antonmedv/expr v0.0.0
+ 	github.com/gdamore/tcell v1.3.0
+ 	github.com/rivo/tview v0.0.0-20200219210816-cd38d7432498
+ )
++
++replace github.com/antonmedv/expr => ../
+diff --git a/debug/go.sum b/debug/go.sum
+index dd620f7..3eaa3b2 100644
+--- a/debug/go.sum
++++ b/debug/go.sum
+@@ -1,6 +1,4 @@
+ github.com/DATA-DOG/go-sqlmock v1.3.3/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
+-github.com/antonmedv/expr v1.9.1-0.20221030193158-2213166cdca2 h1:/lRT2yHd7/W9hW2ZvpNKyoop5YBjJ+wa6p6Vxg1m9Hg=
+-github.com/antonmedv/expr v1.9.1-0.20221030193158-2213166cdca2/go.mod h1:FPC8iWArxls7axbVLsW+kpg1mz29A1b2M6jt+hZfDkU=
+ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+diff --git a/parser/lexer/state.go b/parser/lexer/state.go
+index 1212aa3..5b4b583 100644
+--- a/parser/lexer/state.go
++++ b/parser/lexer/state.go
+@@ -28,14 +28,17 @@ func root(l *lexer) stateFn {
+ 		return questionMark
+ 	case r == '/':
+ 		return slash
++	case r == '|':
++		l.accept("|")
++		l.emit(Operator)
+ 	case strings.ContainsRune("([{", r):
+ 		l.emit(Bracket)
+ 	case strings.ContainsRune(")]}", r):
+ 		l.emit(Bracket)
+ 	case strings.ContainsRune("#,:%+-^", r): // single rune operator
+ 		l.emit(Operator)
+-	case strings.ContainsRune("&|!=*<>", r): // possible double rune operator
+-		l.accept("&|=*")
++	case strings.ContainsRune("&!=*<>", r): // possible double rune operator
++		l.accept("&=*")
+ 		l.emit(Operator)
+ 	case r == '.':
+ 		l.backup()
+diff --git a/parser/parser.go b/parser/parser.go
+index fd26fe1..ac54e29 100644
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -23,10 +23,6 @@ type operator struct {
+ 	associativity associativity
+ }
+ 
+-type builtin struct {
+-	arity int
+-}
+-
+ var unaryOperators = map[string]operator{
+ 	"not": {50, left},
+ 	"!":   {50, left},
+@@ -61,6 +57,10 @@ var binaryOperators = map[string]operator{
+ 	"??":         {500, left},
+ }
+ 
++type builtin struct {
++	arity int
++}
++
+ var builtins = map[string]builtin{
+ 	"all":    {2},
+ 	"none":   {2},
+@@ -201,12 +201,41 @@ func (p *parser) parseExpression(precedence int) Node {
+ 	}
+ 
+ 	if precedence == 0 {
+-		nodeLeft = p.parseConditionalExpression(nodeLeft)
++		nodeLeft = p.parseConditional(nodeLeft)
++
++		if p.current.Is(Operator, "|") {
++			p.next()
++			return p.parsePipe(nodeLeft)
++		}
+ 	}
+ 
+ 	return nodeLeft
+ }
+ 
++func (p *parser) parseConditional(node Node) Node {
++	var expr1, expr2 Node
++	for p.current.Is(Operator, "?") && p.err == nil {
++		p.next()
++
++		if !p.current.Is(Operator, ":") {
++			expr1 = p.parseExpression(0)
++			p.expect(Operator, ":")
++			expr2 = p.parseExpression(0)
++		} else {
++			p.next()
++			expr1 = node
++			expr2 = p.parseExpression(0)
++		}
++
++		node = &ConditionalNode{
++			Cond: node,
++			Exp1: expr1,
++			Exp2: expr2,
++		}
++	}
++	return node
++}
++
+ func (p *parser) parsePrimary() Node {
+ 	token := p.current
+ 
+@@ -245,34 +274,10 @@ func (p *parser) parsePrimary() Node {
+ 		}
+ 	}
+ 
+-	return p.parsePrimaryExpression()
+-}
+-
+-func (p *parser) parseConditionalExpression(node Node) Node {
+-	var expr1, expr2 Node
+-	for p.current.Is(Operator, "?") && p.err == nil {
+-		p.next()
+-
+-		if !p.current.Is(Operator, ":") {
+-			expr1 = p.parseExpression(0)
+-			p.expect(Operator, ":")
+-			expr2 = p.parseExpression(0)
+-		} else {
+-			p.next()
+-			expr1 = node
+-			expr2 = p.parseExpression(0)
+-		}
+-
+-		node = &ConditionalNode{
+-			Cond: node,
+-			Exp1: expr1,
+-			Exp2: expr2,
+-		}
+-	}
+-	return node
++	return p.parseSecondary()
+ }
+ 
+-func (p *parser) parsePrimaryExpression() Node {
++func (p *parser) parseSecondary() Node {
+ 	var node Node
+ 	token := p.current
+ 
+@@ -294,7 +299,7 @@ func (p *parser) parsePrimaryExpression() Node {
+ 			node.SetLocation(token.Location)
+ 			return node
+ 		default:
+-			node = p.parseIdentifierExpression(token)
++			node = p.parseCall(token)
+ 		}
+ 
+ 	case Number:
+@@ -345,14 +350,13 @@ func (p *parser) parsePrimaryExpression() Node {
+ 	return p.parsePostfixExpression(node)
+ }
+ 
+-func (p *parser) parseIdentifierExpression(token Token) Node {
++func (p *parser) parseCall(token Token) Node {
+ 	var node Node
+ 	if p.current.Is(Bracket, "(") {
+ 		var arguments []Node
+ 
+ 		if b, ok := builtins[token.Value]; ok {
+ 			p.expect(Bracket, "(")
+-			// TODO: Add builtins signatures.
+ 			if b.arity == 1 {
+ 				arguments = make([]Node, 1)
+ 				arguments[0] = p.parseExpression(0)
+@@ -578,20 +582,43 @@ func (p *parser) parsePostfixExpression(node Node) Node {
+ 	return node
+ }
+ 
+-func isValidIdentifier(str string) bool {
+-	if len(str) == 0 {
+-		return false
+-	}
+-	h, w := utf8.DecodeRuneInString(str)
+-	if !IsAlphabetic(h) {
+-		return false
+-	}
+-	for _, r := range str[w:] {
+-		if !IsAlphaNumeric(r) {
+-			return false
++func (p *parser) parsePipe(node Node) Node {
++	identifier := p.current
++	p.expect(Identifier)
++
++	arguments := []Node{node}
++
++	if b, ok := builtins[identifier.Value]; ok {
++		p.expect(Bracket, "(")
++		if b.arity == 2 {
++			arguments = append(arguments, p.parseClosure())
++		}
++		p.expect(Bracket, ")")
++
++		node = &BuiltinNode{
++			Name:      identifier.Value,
++			Arguments: arguments,
+ 		}
++		node.SetLocation(identifier.Location)
++	} else {
++		callee := &IdentifierNode{Value: identifier.Value}
++		callee.SetLocation(identifier.Location)
++
++		arguments = append(arguments, p.parseArguments()...)
++
++		node = &CallNode{
++			Callee:    callee,
++			Arguments: arguments,
++		}
++		node.SetLocation(identifier.Location)
+ 	}
+-	return true
++
++	if p.current.Is(Operator, "|") {
++		p.next()
++		return p.parsePipe(node)
++	}
++
++	return node
+ }
+ 
+ func (p *parser) parseArguments() []Node {
+@@ -608,3 +635,19 @@ func (p *parser) parseArguments() []Node {
+ 
+ 	return nodes
+ }
++
++func isValidIdentifier(str string) bool {
++	if len(str) == 0 {
++		return false
++	}
++	h, w := utf8.DecodeRuneInString(str)
++	if !IsAlphabetic(h) {
++		return false
++	}
++	for _, r := range str[w:] {
++		if !IsAlphaNumeric(r) {
++			return false
++		}
++	}
++	return true
++}
+diff --git a/repl/go.mod b/repl/go.mod
+index 544f972..4e15b13 100644
+--- a/repl/go.mod
++++ b/repl/go.mod
+@@ -3,8 +3,10 @@ module github.com/antonmedv/expr/repl
+ go 1.20
+ 
+ require (
+-	github.com/antonmedv/expr v1.12.7
++	github.com/antonmedv/expr v0.0.0
+ 	github.com/chzyer/readline v1.5.1
+ )
+ 
+ require golang.org/x/sys v0.11.0 // indirect
++
++replace github.com/antonmedv/expr => ../
+diff --git a/repl/go.sum b/repl/go.sum
+index 1227560..e5a857a 100644
+--- a/repl/go.sum
++++ b/repl/go.sum
+@@ -1,5 +1,3 @@
+-github.com/antonmedv/expr v1.12.7 h1:jfV/l/+dHWAadLwAtESXNxXdfbK9bE4+FNMHYCMntwk=
+-github.com/antonmedv/expr v1.12.7/go.mod h1:FPC8iWArxls7axbVLsW+kpg1mz29A1b2M6jt+hZfDkU=
+ github.com/chzyer/logex v1.2.1 h1:XHDu3E6q+gdHgsdTPH6ImJMIp436vR6MPtH8gP05QzM=
+ github.com/chzyer/logex v1.2.1/go.mod h1:JLbx6lG2kDbNRFnfkgvh4eRJRPX1QCoOIWomwysCBrQ=
+ github.com/chzyer/readline v1.5.1 h1:upd/6fQk4src78LMRzh5vItIt361/o4uq553V8B5sGI=
+@@ -16,7 +14,6 @@ github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSS
+ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+ github.com/stretchr/testify v1.8.0 h1:pSgiaMZlXftHpm5L7V1+rVB+AZJydKsMxsQBIJw4PKk=
+ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
+-golang.org/x/sys v0.0.0-20220310020820-b874c991c1a5 h1:y/woIyUBFbpQGKS0u1aHF/40WUDnek3fPOyD08H5Vng=
+ golang.org/x/sys v0.0.0-20220310020820-b874c991c1a5/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.11.0 h1:eG7RXZHdqOJ1i+0lgLgCpSXAp6M3LYlAo6osgSi0xOM=
+ golang.org/x/sys v0.11.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=

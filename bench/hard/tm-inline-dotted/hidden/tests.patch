@@ -1,0 +1,174 @@
+diff --git a/internal/toml-test/tests/valid/inline-table/inline-table.toml b/internal/toml-test/tests/valid/inline-table/inline-table.toml
+index 257047e..394d1f0 100644
+--- a/internal/toml-test/tests/valid/inline-table/inline-table.toml
++++ b/internal/toml-test/tests/valid/inline-table/inline-table.toml
+@@ -1,5 +1,5 @@
+-name = { first = "Tom", last = "Preston-Werner" }
+-point = { x = 1, y = 2 }
+-simple = { a = 1 }
+-str-key = { "a" = 1 }
++name        = { first = "Tom", last = "Preston-Werner" }
++point       = { x = 1, y = 2 }
++simple      = { a = 1 }
++str-key     = { "a" = 1 }
+ table-array = [{ "a" = 1 }, { "b" = 2 }]
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-5.json b/internal/toml-test/tests/valid/inline-table/key-dotted-5.json
+new file mode 100644
+index 0000000..af029e9
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-5.json
+@@ -0,0 +1,66 @@
++{
++  "arr-1": [
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "1"
++        }
++      }
++    }
++  ],
++  "arr-2": [
++    {
++      "type": "string",
++      "value": "str"
++    },
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "1"
++        }
++      }
++    }
++  ],
++  "arr-3": [
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "1"
++        }
++      }
++    },
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "2"
++        }
++      }
++    }
++  ],
++  "arr-4": [
++    {
++      "type": "string",
++      "value": "str"
++    },
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "1"
++        }
++      }
++    },
++    {
++      "a": {
++        "b": {
++          "type": "integer",
++          "value": "2"
++        }
++      }
++    }
++  ]
++}
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-5.toml b/internal/toml-test/tests/valid/inline-table/key-dotted-5.toml
+new file mode 100644
+index 0000000..f6f5bdc
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-5.toml
+@@ -0,0 +1,5 @@
++arr-1 = [{a.b = 1}]
++arr-2 = ["str", {a.b = 1}]
++
++arr-3 = [{a.b = 1}, {a.b = 2}]
++arr-4 = ["str", {a.b = 1}, {a.b = 2}]
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-6.json b/internal/toml-test/tests/valid/inline-table/key-dotted-6.json
+new file mode 100644
+index 0000000..e3df6d3
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-6.json
+@@ -0,0 +1,28 @@
++{
++  "top": {
++    "dot": {
++      "dot": [
++        {
++          "dot": {
++            "dot": {
++              "dot": {
++                "type": "integer",
++                "value": "1"
++              }
++            }
++          }
++        },
++        {
++          "dot": {
++            "dot": {
++              "dot": {
++                "type": "integer",
++                "value": "2"
++              }
++            }
++          }
++        }
++      ]
++    }
++  }
++}
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-6.toml b/internal/toml-test/tests/valid/inline-table/key-dotted-6.toml
+new file mode 100644
+index 0000000..054eb8a
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-6.toml
+@@ -0,0 +1,4 @@
++top.dot.dot = [
++	{dot.dot.dot = 1},
++	{dot.dot.dot = 2},
++]
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-7.json b/internal/toml-test/tests/valid/inline-table/key-dotted-7.json
+new file mode 100644
+index 0000000..0ea615e
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-7.json
+@@ -0,0 +1,18 @@
++{
++  "arr": [
++    {
++      "a": {
++        "b": [
++          {
++            "c": {
++              "d": {
++                "type": "integer",
++                "value": "1"
++              }
++            }
++          }
++        ]
++      }
++    }
++  ]
++}
+diff --git a/internal/toml-test/tests/valid/inline-table/key-dotted-7.toml b/internal/toml-test/tests/valid/inline-table/key-dotted-7.toml
+new file mode 100644
+index 0000000..0556547
+--- /dev/null
++++ b/internal/toml-test/tests/valid/inline-table/key-dotted-7.toml
+@@ -0,0 +1,3 @@
++arr = [
++	{a.b = [{c.d = 1}]}
++]

@@ -7,7 +7,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 status=0
 dirs=("$@")
-[[ ${#dirs[@]} -gt 0 ]] || dirs=("$root"/bench/tasks/*/ "$root"/bench/scale/*/)
+[[ ${#dirs[@]} -gt 0 ]] || dirs=("$root"/bench/tasks/*/ "$root"/bench/scale/*/ "$root"/bench/hard/*/)
 for tdir in "${dirs[@]}"; do
   [[ -d $tdir ]] || continue
   tdir=$(cd "$tdir" && pwd)

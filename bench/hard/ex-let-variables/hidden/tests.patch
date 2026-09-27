@@ -1,0 +1,79 @@
+diff --git a/checker/checker_test.go b/checker/checker_test.go
+index 4b4f77c..987f035 100644
+--- a/checker/checker_test.go
++++ b/checker/checker_test.go
+@@ -125,6 +125,7 @@ var successTests = []string{
+ 	"Any.A?.B == nil",
+ 	"(Any.Bool ?? Bool) > 0",
+ 	"Bool ?? Bool",
++	"let foo = 1; foo == 1",
+ }
+ 
+ func TestCheck(t *testing.T) {
+diff --git a/expr_test.go b/expr_test.go
+index 3e959bb..7925862 100644
+--- a/expr_test.go
++++ b/expr_test.go
+@@ -948,6 +948,18 @@ func TestExpr(t *testing.T) {
+ 			`1 /* one */ + 2 // two`,
+ 			3,
+ 		},
++		{
++			`let x = 1; x + 2`,
++			3,
++		},
++		{
++			`map(1..3, let x = #; let y = x * x; y * y)`,
++			[]interface{}{1, 16, 81},
++		},
++		{
++			`map(1..2, let x = #; map(2..3, let y = #; x + y))`,
++			[]interface{}{[]interface{}{3, 4}, []interface{}{4, 5}},
++		},
+ 	}
+ 
+ 	for _, tt := range tests {
+diff --git a/parser/lexer/lexer_test.go b/parser/lexer/lexer_test.go
+index d69ff77..1a94180 100644
+--- a/parser/lexer/lexer_test.go
++++ b/parser/lexer/lexer_test.go
+@@ -188,6 +188,17 @@ func TestLex(t *testing.T) {
+ 				{Kind: EOF},
+ 			},
+ 		},
++		{
++			`let foo = bar;`,
++			[]Token{
++				{Kind: Operator, Value: "let"},
++				{Kind: Identifier, Value: "foo"},
++				{Kind: Operator, Value: "="},
++				{Kind: Identifier, Value: "bar"},
++				{Kind: Operator, Value: ";"},
++				{Kind: EOF},
++			},
++		},
+ 	}
+ 
+ 	for _, test := range tests {
+diff --git a/parser/parser_test.go b/parser/parser_test.go
+index bbd3847..002f1f3 100644
+--- a/parser/parser_test.go
++++ b/parser/parser_test.go
+@@ -452,6 +452,17 @@ func TestParse(t *testing.T) {
+ 				Callee: &IdentifierNode{Value: "ok"},
+ 				Arguments: []Node{
+ 					&BoolNode{Value: true}}}},
++		{
++			`let foo = a + b; foo + c`,
++			&VariableDeclaratorNode{
++				Name: "foo",
++				Value: &BinaryNode{Operator: "+",
++					Left:  &IdentifierNode{Value: "a"},
++					Right: &IdentifierNode{Value: "b"}},
++				Expr: &BinaryNode{Operator: "+",
++					Left:  &IdentifierNode{Value: "foo"},
++					Right: &IdentifierNode{Value: "c"}}},
++		},
+ 	}
+ 	for _, test := range parseTests {
+ 		actual, err := parser.ParseWithConfig(test.input, &conf.Config{Pipes: true})

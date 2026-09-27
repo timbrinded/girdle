@@ -1,0 +1,1 @@
+Parse and decode errors report a position like `At line 2, column 5-15:`, but the start column is off by one. Fix the column numbers, and make the column easy for users to get: add a `Col int` field to `Position`, the 1-based column where the error starts, and fill it in wherever a `Position` is reported. `go test ./...` must pass.

@@ -40,7 +40,7 @@ bench/bench.sh -w -a "girdle-fast girdle" -r 3
 bench/bench.sh -w -s scale -a "girdle-fast girdle" -r 3
 ```
 
-`-w` runs warm: one reused, warmed directory per agent and task, as in daily use. `-s scale` picks the six tasks on real repositories (goldmark, more-itertools).
+`-w` runs warm: one reused, warmed directory per agent and task, as in daily use. `-s scale` picks the six tasks on real repositories (goldmark, more-itertools). `-s hard` picks 22 tasks rebuilt from real fix commits in seven repositories, checked SWE-bench style by the commits' own hidden tests ([decision 0015](docs/decisions/0015-hard-suite.md)).
 
 The scale suite's tasks name an upstream repository and commit in a `source` file. `bench/prepare.sh` clones each one once into `bench/.cache`, so their code is never vendored here.
 

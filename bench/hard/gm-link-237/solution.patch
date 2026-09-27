@@ -1,0 +1,376 @@
+diff --git a/parser/link.go b/parser/link.go
+index c36cce5..4717d6e 100644
+--- a/parser/link.go
++++ b/parser/link.go
+@@ -221,21 +221,33 @@ func (s *linkParser) processLinkLabel(parent ast.Node, link *ast.Link, last *lin
+ 	}
+ }
+ 
++var linkFindClosureOptions text.FindClosureOptions = text.FindClosureOptions{
++	Nesting: false,
++	Newline: true,
++	Advance: true,
++}
++
+ func (s *linkParser) parseReferenceLink(parent ast.Node, last *linkLabelState, block text.Reader, pc Context) (*ast.Link, bool) {
+ 	_, orgpos := block.Position()
+ 	block.Advance(1) // skip '['
+-	line, segment := block.PeekLine()
+-	endIndex := util.FindClosure(line, '[', ']', false, true)
+-	if endIndex < 0 {
++	segments, found := block.FindClosure('[', ']', linkFindClosureOptions)
++	if !found {
+ 		return nil, false
+ 	}
+ 
+-	block.Advance(endIndex + 1)
+-	ssegment := segment.WithStop(segment.Start + endIndex)
+-	maybeReference := block.Value(ssegment)
++	var maybeReference []byte
++	if segments.Len() == 1 { // avoid allocate a new byte slice
++		maybeReference = block.Value(segments.At(0))
++	} else {
++		maybeReference = []byte{}
++		for i := 0; i < segments.Len(); i++ {
++			s := segments.At(i)
++			maybeReference = append(maybeReference, block.Value(s)...)
++		}
++	}
+ 	if util.IsBlank(maybeReference) { // collapsed reference link
+-		ssegment = text.NewSegment(last.Segment.Stop, orgpos.Start-1)
+-		maybeReference = block.Value(ssegment)
++		s := text.NewSegment(last.Segment.Stop, orgpos.Start-1)
++		maybeReference = block.Value(s)
+ 	}
+ 
+ 	ref, ok := pc.Reference(util.ToLinkReference(maybeReference))
+@@ -338,31 +350,20 @@ func parseLinkTitle(block text.Reader) ([]byte, bool) {
+ 	if opener == '(' {
+ 		closer = ')'
+ 	}
+-	savedLine, savedPosition := block.Position()
+-	var title []byte
+-	for i := 0; ; i++ {
+-		line, _ := block.PeekLine()
+-		if line == nil {
+-			block.SetPosition(savedLine, savedPosition)
+-			return nil, false
+-		}
+-		offset := 0
+-		if i == 0 {
+-			offset = 1
+-		}
+-		pos := util.FindClosure(line[offset:], opener, closer, false, true)
+-		if pos < 0 {
+-			title = append(title, line[offset:]...)
+-			block.AdvanceLine()
+-			continue
++	block.Advance(1)
++	segments, found := block.FindClosure(opener, closer, linkFindClosureOptions)
++	if found {
++		if segments.Len() == 1 {
++			return block.Value(segments.At(0)), true
+ 		}
+-		pos += offset + 1 // 1: closer
+-		block.Advance(pos)
+-		if i == 0 { // avoid allocating new slice
+-			return line[offset : pos-1], true
++		var title []byte
++		for i := 0; i < segments.Len(); i++ {
++			s := segments.At(i)
++			title = append(title, block.Value(s)...)
+ 		}
+-		return append(title, line[offset:pos-1]...), true
++		return title, true
+ 	}
++	return nil, false
+ }
+ 
+ func (s *linkParser) CloseBlock(parent ast.Node, block text.Reader, pc Context) {
+diff --git a/parser/link_ref.go b/parser/link_ref.go
+index f7f61bb..dd98ed1 100644
+--- a/parser/link_ref.go
++++ b/parser/link_ref.go
+@@ -52,7 +52,7 @@ func (p *linkReferenceParagraphTransformer) Transform(node *ast.Paragraph, reade
+ 
+ func parseLinkReferenceDefinition(block text.Reader, pc Context) (int, int) {
+ 	block.SkipSpaces()
+-	line, segment := block.PeekLine()
++	line, _ := block.PeekLine()
+ 	if line == nil {
+ 		return -1, -1
+ 	}
+@@ -67,39 +67,34 @@ func parseLinkReferenceDefinition(block text.Reader, pc Context) (int, int) {
+ 	if line[pos] != '[' {
+ 		return -1, -1
+ 	}
+-	open := segment.Start + pos + 1
+-	closes := -1
+ 	block.Advance(pos + 1)
+-	for {
+-		line, segment = block.PeekLine()
+-		if line == nil {
+-			return -1, -1
+-		}
+-		closure := util.FindClosure(line, '[', ']', false, false)
+-		if closure > -1 {
+-			closes = segment.Start + closure
+-			next := closure + 1
+-			if next >= len(line) || line[next] != ':' {
+-				return -1, -1
+-			}
+-			block.Advance(next + 1)
+-			break
++	segments, found := block.FindClosure('[', ']', linkFindClosureOptions)
++	if !found {
++		return -1, -1
++	}
++	var label []byte
++	if segments.Len() == 1 {
++		label = block.Value(segments.At(0))
++	} else {
++		for i := 0; i < segments.Len(); i++ {
++			s := segments.At(i)
++			label = append(label, block.Value(s)...)
+ 		}
+-		block.AdvanceLine()
+ 	}
+-	if closes < 0 {
++	if util.IsBlank(label) {
+ 		return -1, -1
+ 	}
+-	label := block.Value(text.NewSegment(open, closes))
+-	if util.IsBlank(label) {
++	block.SkipSpaces()
++	if block.Peek() != ':' {
+ 		return -1, -1
+ 	}
++	block.Advance(1)
+ 	block.SkipSpaces()
+ 	destination, ok := parseLinkDestination(block)
+ 	if !ok {
+ 		return -1, -1
+ 	}
+-	line, segment = block.PeekLine()
++	line, _ = block.PeekLine()
+ 	isNewLine := line == nil || util.IsBlank(line)
+ 
+ 	endLine, _ := block.Position()
+@@ -117,30 +112,12 @@ func parseLinkReferenceDefinition(block text.Reader, pc Context) (int, int) {
+ 		return -1, -1
+ 	}
+ 	block.Advance(1)
+-	open = -1
+-	closes = -1
+ 	closer := opener
+ 	if opener == '(' {
+ 		closer = ')'
+ 	}
+-	for {
+-		line, segment = block.PeekLine()
+-		if line == nil {
+-			break
+-		}
+-		if open < 0 {
+-			open = segment.Start
+-		}
+-		closure := util.FindClosure(line, opener, closer, false, true)
+-		if closure > -1 {
+-			closes = segment.Start + closure
+-			block.Advance(closure + 1)
+-			break
+-		}
+-		block.AdvanceLine()
+-	}
+-
+-	if closes < 0 {
++	segments, found = block.FindClosure(opener, closer, linkFindClosureOptions)
++	if !found {
+ 		if !isNewLine {
+ 			return -1, -1
+ 		}
+@@ -148,20 +125,26 @@ func parseLinkReferenceDefinition(block text.Reader, pc Context) (int, int) {
+ 		pc.AddReference(ref)
+ 		return startLine, endLine
+ 	}
++	var title []byte
++	if segments.Len() == 1 {
++		title = block.Value(segments.At(0))
++	} else {
++		for i := 0; i < segments.Len(); i++ {
++			s := segments.At(i)
++			title = append(title, block.Value(s)...)
++		}
++	}
+ 
+-	line, segment = block.PeekLine()
++	line, _ = block.PeekLine()
+ 	if line != nil && !util.IsBlank(line) {
+ 		if !isNewLine {
+ 			return -1, -1
+ 		}
+-		title := block.Value(text.NewSegment(open, closes))
+ 		ref := NewReference(label, destination, title)
+ 		pc.AddReference(ref)
+ 		return startLine, endLine
+ 	}
+ 
+-	title := block.Value(text.NewSegment(open, closes))
+-
+ 	endLine, _ = block.Position()
+ 	ref := NewReference(label, destination, title)
+ 	pc.AddReference(ref)
+diff --git a/text/reader.go b/text/reader.go
+index df25e54..319f1c8 100644
+--- a/text/reader.go
++++ b/text/reader.go
+@@ -70,6 +70,28 @@ type Reader interface {
+ 
+ 	// Match performs regular expression searching to current line.
+ 	FindSubMatch(reg *regexp.Regexp) [][]byte
++
++	// FindClosure finds corresponding closure.
++	FindClosure(opener, closer byte, options FindClosureOptions) (*Segments, bool)
++}
++
++// FindClosureOptions is options for Reader.FindClosure
++type FindClosureOptions struct {
++	// CodeSpan is a flag for the FindClosure. If this is set to true,
++	// FindClosure ignores closers in codespans.
++	CodeSpan bool
++
++	// Nesting is a flag for the FindClosure. If this is set to true,
++	// FindClosure allows nesting.
++	Nesting bool
++
++	// Newline is a flag for the FindClosure. If this is set to true,
++	// FindClosure searches for a closer over multiple lines.
++	Newline bool
++
++	// Advance is a flag for the FindClosure. If this is set to true,
++	// FindClosure advances pointers when closer is found.
++	Advance bool
+ }
+ 
+ type reader struct {
+@@ -92,6 +114,10 @@ func NewReader(source []byte) Reader {
+ 	return r
+ }
+ 
++func (r *reader) FindClosure(opener, closer byte, options FindClosureOptions) (*Segments, bool) {
++	return findClosureReader(r, opener, closer, options)
++}
++
+ func (r *reader) ResetPosition() {
+ 	r.line = -1
+ 	r.head = 0
+@@ -272,6 +298,10 @@ func NewBlockReader(source []byte, segments *Segments) BlockReader {
+ 	return r
+ }
+ 
++func (r *blockReader) FindClosure(opener, closer byte, options FindClosureOptions) (*Segments, bool) {
++	return findClosureReader(r, opener, closer, options)
++}
++
+ func (r *blockReader) ResetPosition() {
+ 	r.line = -1
+ 	r.head = 0
+@@ -541,3 +571,83 @@ func readRuneReader(r Reader) (rune, int, error) {
+ 	r.Advance(size)
+ 	return rn, size, nil
+ }
++
++func findClosureReader(r Reader, opener, closer byte, opts FindClosureOptions) (*Segments, bool) {
++	opened := 1
++	codeSpanOpener := 0
++	closed := false
++	orgline, orgpos := r.Position()
++	var ret *Segments
++
++	for {
++		bs, seg := r.PeekLine()
++		if bs == nil {
++			goto end
++		}
++		i := 0
++		for i < len(bs) {
++			c := bs[i]
++			if opts.CodeSpan && codeSpanOpener != 0 && c == '`' {
++				codeSpanCloser := 0
++				for ; i < len(bs); i++ {
++					if bs[i] == '`' {
++						codeSpanCloser++
++					} else {
++						i--
++						break
++					}
++				}
++				if codeSpanCloser == codeSpanOpener {
++					codeSpanOpener = 0
++				}
++			} else if codeSpanOpener == 0 && c == '\\' && i < len(bs)-1 && util.IsPunct(bs[i+1]) {
++				i += 2
++				continue
++			} else if opts.CodeSpan && codeSpanOpener == 0 && c == '`' {
++				for ; i < len(bs); i++ {
++					if bs[i] == '`' {
++						codeSpanOpener++
++					} else {
++						i--
++						break
++					}
++				}
++			} else if (opts.CodeSpan && codeSpanOpener == 0) || !opts.CodeSpan {
++				if c == closer {
++					opened--
++					if opened == 0 {
++						if ret == nil {
++							ret = NewSegments()
++						}
++						ret.Append(seg.WithStop(seg.Start + i))
++						r.Advance(i + 1)
++						closed = true
++						goto end
++					}
++				} else if c == opener {
++					if !opts.Nesting {
++						goto end
++					}
++					opened++
++				}
++			}
++			i++
++		}
++		if !opts.Newline {
++			goto end
++		}
++		r.AdvanceLine()
++		if ret == nil {
++			ret = NewSegments()
++		}
++		ret.Append(seg)
++	}
++end:
++	if !opts.Advance {
++		r.SetPosition(orgline, orgpos)
++	}
++	if closed {
++		return ret, true
++	}
++	return nil, false
++}
+diff --git a/util/util.go b/util/util.go
+index 1a5859e..1af34b8 100644
+--- a/util/util.go
++++ b/util/util.go
+@@ -290,6 +290,10 @@ func FirstNonSpacePosition(bs []byte) int {
+ // If codeSpan is set true, it ignores characters in code spans.
+ // If allowNesting is set true, closures correspond to nested opener will be
+ // ignored.
++//
++// Deprecated: This function can not handle newlines. Many elements
++// can be existed over multiple lines(e.g. link labels).
++// Use text.Reader.FindClosure.
+ func FindClosure(bs []byte, opener, closure byte, codeSpan, allowNesting bool) int {
+ 	i := 0
+ 	opened := 1

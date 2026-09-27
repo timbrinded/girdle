@@ -16,9 +16,13 @@ agent=$1 task=$2 rep=$3 outroot=$4
 root=$(cd "$(dirname "$0")/.." && pwd)
 tdir=$root/bench/tasks/$task
 [[ -d $tdir ]] || tdir=$root/bench/scale/$task
+[[ -d $tdir ]] || tdir=$root/bench/hard/$task
 model=${BENCH_MODEL:-meta/muse-spark-1.3-contributor}
 reasoning=${BENCH_REASONING:-medium}
-timeout_s=${BENCH_TIMEOUT:-600}
+# Hard tasks are long by design: they get 20 minutes unless BENCH_TIMEOUT says otherwise.
+default_timeout=600
+[[ $tdir == */bench/hard/* ]] && default_timeout=1200
+timeout_s=${BENCH_TIMEOUT:-$default_timeout}
 mkdir -p "$outroot"
 outroot=$(cd "$outroot" && pwd)
 id=$task.$agent.$rep
