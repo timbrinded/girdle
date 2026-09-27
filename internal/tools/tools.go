@@ -41,28 +41,29 @@ type Options struct {
 	// connections to this machine still work. A benchmark uses it so an
 	// agent can't fetch the upstream fix it is being tested on.
 	Offline bool
-	// DenyRead lists absolute path prefixes the tools may not read, other
-	// than inside the working directory: other copies of the code under
-	// test, which a benchmark agent could copy the fix from. Shell commands
-	// get it from macOS's sandbox-exec.
-	DenyRead []string
+	// DenyRead lists regular expressions for absolute paths the tools may
+	// not read, other than inside the working directory: other copies of
+	// the code under test, which a benchmark agent could copy the fix from.
+	// Keep them simple (anchors, escapes, bracket sets): shell commands get
+	// them from macOS's sandbox-exec, whose regex dialect is POSIX's.
+	DenyRead []*regexp.Regexp
 }
 
 // offlineProfile is the macOS sandbox profile for offline commands.
 const offlineProfile = `(version 1)(allow default)(deny network-outbound (remote ip))(allow network-outbound (remote ip "localhost:*"))`
 
 // sandboxProfile is the macOS sandbox profile for shell commands: offline if
-// asked, and unable to read under the denied prefixes except inside dir.
+// asked, and unable to read denied paths except inside dir.
 // Later rules win, so dir's allow comes last.
-func sandboxProfile(dir string, offline bool, deny []string) string {
+func sandboxProfile(dir string, offline bool, deny []*regexp.Regexp) string {
 	var b strings.Builder
 	b.WriteString("(version 1)(allow default)")
 	if offline {
 		b.WriteString(strings.TrimPrefix(offlineProfile, "(version 1)(allow default)"))
 	}
 	if len(deny) > 0 {
-		for _, p := range deny {
-			fmt.Fprintf(&b, `(deny file-read* (regex #"^%s"))`, regexp.QuoteMeta(p))
+		for _, re := range deny {
+			fmt.Fprintf(&b, `(deny file-read* (regex #"%s"))`, re.String())
 		}
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
 			dir = real
@@ -72,14 +73,14 @@ func sandboxProfile(dir string, offline bool, deny []string) string {
 	return b.String()
 }
 
-// denied reports whether p, an absolute path, is under a denied prefix and
-// outside the working directory.
+// denied reports whether p, an absolute path, matches a denied pattern and
+// is outside the working directory.
 func (t toolset) denied(p string) bool {
 	if within(p, t.dir) {
 		return false
 	}
-	for _, d := range t.denyRead {
-		if strings.HasPrefix(p, d) {
+	for _, re := range t.denyRead {
+		if re.MatchString(p) {
 			return true
 		}
 	}
@@ -119,8 +120,8 @@ type toolset struct {
 	guard Guard
 	// offline runs shell commands without outside network access.
 	offline bool
-	// denyRead lists path prefixes the tools may not read outside dir.
-	denyRead []string
+	// denyRead matches the paths the tools may not read outside dir.
+	denyRead []*regexp.Regexp
 }
 
 func newToolset(dir string, opts Options) toolset {

@@ -131,7 +131,40 @@ Ratios are the candidate's time over the fast flow's, over passing runs, with 95
   - Pruned context (`-compact`), structural context (`-structure`) and a plan-once prompt (`-planonce`) didn't move output either.
   - Its thinking per task looks roughly fixed. Step time follows output tokens.
   - That leaves time to the model, to the provider's speed, or to spending on copies (racing). None of those is a harness design lever.
-- **The kept change, prefetch skipping data files, is confirmed on the held-out set:** results to follow.
+- **The kept change, prefetch skipping data files, was run once on the held-out set.** Two builds ran side by side, 2 runs per task: today's code, and the same code with the data skip turned off (`girdle-fast@base`). On the held-out set it acts on two toml tasks.
+
+  | Held-out | Without the skip | With it |
+  |---|---|---|
+  | Candidates judged (tm-inline-dotted, tm-quoted-dots) | 757 and 422 | 26 and 23 |
+  | Snapshot ready after | 3.2 to 4.0 s | 0.4 s |
+  | Cost per run on those tasks | $0.0105 | $0.0013 |
+  | Time over passing runs, those two tasks | | 1.26 and 1.48, all 8 runs passed |
+  | Winning copies' output per passing toml run | 8.5k | 10.9k |
+
+  - On the development toml tasks the same change measured 0.98 (0.77 to 1.31), with output unchanged.
+  - The time effect is inconsistent and within noise. The saving in Jev cost and the 3.6 s off the critical path are facts. It is kept: it fixes prefetch judging a random subset of data files and picking the wrong ones.
+  - It may also be a small instance of `-wide`'s pattern: the right files up front, and longer thinking.
+- **Isolation held on the held-out set.** gj-paths' agents again went for `gjson@v1.19.0`: 11 reads denied in one run. A mux run tried `go mod download` and the network rule stopped it. No read of another copy got through.
+- **The benchmark's noise, measured.** Nineteen held-out tasks run identical code in both builds. There the verdict rule measured 0.84 (0.73 to 0.97): an interval excluding 1 for no difference at all. Only the pass-count rule, 37 against 39, kept it from a false "FASTER". This is why nothing here was kept on one round. It also means a real change below about 15 to 20% can't be told from chance at 2 runs per task.
+- **Isolation, hardened.** Other projects on this machine vendor more-itertools inside their virtualenvs' `setuptools/_vendor`. So `-deny-read` now takes regular expressions, and the benchmark denies:
+  - the module path anywhere, which covers the module cache, its download cache and other projects' `vendor/`;
+  - a Python package's name anywhere, which covers any `site-packages` or `_vendor`.
+  - A test package named `tests` is left out: the name is too common to deny everywhere.
+
+## Outcome
+
+- **No design change reduced the fast flow's time on Space Bunny measurably.**
+  - LLM steps are 86% of a passing run.
+  - Step time follows output tokens.
+  - The model's output per task held steady whatever the harness did to its context or prompt.
+- **What this goal leaves:**
+  - benchmark isolation from the local disk;
+  - a verdict rule that times passing runs only and counts fresh tokens;
+  - a calibrated sense of the noise;
+  - prefetch that stops wasting 4 s and most of its Jev cost on data-heavy repositories;
+  - five fewer flags.
+- **Speed now has to come from the model, the provider or compute.** Compute means racing, and must be reported as bought speed.
+- **The open front is accuracy.** The fast flow's quickest failures are false "done"s at 19 to 47 s.
 
 ## Ideas measured and dropped before a live round
 

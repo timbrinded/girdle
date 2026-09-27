@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -187,6 +188,7 @@ func TestDenyReadKeepsOtherCopiesOut(t *testing.T) {
 		"warm/other/repo/fix.go":     "package a // the fix\n",
 		"modcache/lib@v1.9.0/fix.go": "package lib // released fix\n",
 		"modcache/dep@v1.0.0/dep.go": "package dep\n",
+		"other/vendor/lib/fix.go":    "package lib // vendored fix\n",
 	}
 	for p, c := range writeFiles {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
@@ -197,12 +199,16 @@ func TestDenyReadKeepsOtherCopiesOut(t *testing.T) {
 		}
 	}
 	dir := filepath.Join(root, "warm/task/repo")
-	ts := newToolset(dir, Options{DenyRead: []string{filepath.Join(root, "warm"), filepath.Join(root, "modcache/lib@")}})
+	ts := newToolset(dir, Options{DenyRead: []*regexp.Regexp{
+		regexp.MustCompile("^" + regexp.QuoteMeta(filepath.Join(root, "warm")) + "/"),
+		regexp.MustCompile(`/lib[@/]`),
+	}})
 	for cmd, allowed := range map[string]bool{
 		"cat a.go":                    true,
 		"cat ../../other/repo/fix.go": false,
 		"cat " + root + "/modcache/lib@v1.9.0/fix.go": false,
 		"cat " + root + "/modcache/dep@v1.0.0/dep.go": true,
+		"cat " + root + "/other/vendor/lib/fix.go":    false,
 	} {
 		r := ts.shell(t.Context(), cmd, 10*time.Second)
 		if (r.code == 0) != allowed {

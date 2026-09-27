@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,7 +76,7 @@ func run() int {
 		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
-		denyRead    []string
+		denyRead    []*regexp.Regexp
 		offline     = flag.Bool("offline-tools", false, "run shell commands without outside network access (macOS), as the benchmark does so an agent can't fetch the fix it is tested on")
 		tripwire    = flag.Bool("tripwire", true, "check every shell command first and block ones that delete outside the project, force-push a shared branch, or send secrets off the machine")
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
@@ -83,11 +84,12 @@ func run() int {
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
 		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
 	)
-	flag.Func("deny-read", "an absolute path prefix that tools may not read outside the working directory, such as other copies of a benchmark's code under test (repeatable; shell commands need macOS's sandbox-exec)", func(v string) error {
-		if !filepath.IsAbs(v) {
-			return fmt.Errorf("%q is not an absolute path", v)
+	flag.Func("deny-read", "a regular expression for absolute paths that tools may not read outside the working directory, such as other copies of a benchmark's code under test (repeatable; shell commands need macOS's sandbox-exec)", func(v string) error {
+		re, err := regexp.Compile(v)
+		if err != nil {
+			return err
 		}
-		denyRead = append(denyRead, v)
+		denyRead = append(denyRead, re)
 		return nil
 	})
 	flag.Parse()

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -113,7 +114,7 @@ type Config struct {
 	// DenyRead lists path prefixes the tools may not read outside the
 	// working directory, such as other copies of a benchmark's code under
 	// test.
-	DenyRead []string
+	DenyRead []*regexp.Regexp
 }
 
 // Session is one conversation in one working directory.

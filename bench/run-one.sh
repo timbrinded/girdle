@@ -74,26 +74,28 @@ prompt=$(cat "$tdir/task.md")
 
 # Other copies of the code under test would let an agent copy the fix: the
 # benchmark's clones of other commits, other runs' warm copies, and a
-# released version in the Go module cache or in Python's site-packages. An
-# agent read gjson's released feature from the module cache (decision 0019),
-# so Girdle's tools may not read any of them; the working copy stays open.
-deny=(-deny-read "$root/bench/.cache" -deny-read "$root/bench/.warm")
+# released or vendored copy anywhere on disk: in the Go module cache, in
+# another project's vendor directory, in any site-packages or a vendored
+# _vendor. An agent read gjson's released feature from the module cache
+# (decision 0019). Girdle's tools may not read any path these patterns
+# match; the working copy stays open.
+rx() { printf %s "$1" | sed 's/[][\.^$*+?(){}|]/\\&/g'; }
+deny=(-deny-read "^$(rx "$root/bench/.cache")/" -deny-read "^$(rx "$root/bench/.warm")/")
 if [[ -f $work/go.mod ]]; then
   mod=$(awk '$1 == "module" {print $2; exit}' "$work/go.mod")
-  modcache=$(go env GOMODCACHE)
   # The module cache writes a capital as ! and the lower-case letter. A
   # major-version suffix is dropped too, to cover the other majors.
   for m in "$mod" "${mod%/v[0-9]*}"; do
     esc=$(printf %s "$m" | perl -pe 's/([A-Z])/!\l$1/g')
-    deny+=(-deny-read "$modcache/$esc@" -deny-read "$modcache/cache/download/$esc/")
+    deny+=(-deny-read "/$(rx "$m")[@/]" -deny-read "/$(rx "$esc")[@/]")
   done
 fi
 for pkg in "$work"/*/__init__.py "$work"/src/*/__init__.py; do
   [[ -f $pkg ]] || continue
   name=$(basename "$(dirname "$pkg")")
-  while read -r site; do
-    [[ -n $site ]] && deny+=(-deny-read "$site/$name")
-  done < <(python3 -c 'import site; print("\n".join(site.getsitepackages() + [site.getusersitepackages()]))' 2>/dev/null)
+  # A test package's name is too common to deny everywhere.
+  [[ $name == test || $name == tests || $name == testing ]] && continue
+  deny+=(-deny-read "/$(rx "$name")/")
 done
 
 start=$(date +%s)
