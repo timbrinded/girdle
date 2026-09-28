@@ -66,12 +66,11 @@ type Event struct {
 
 // Usage is LLM token use for a turn or a run.
 type Usage struct {
-	InputTokens     int64   `json:"input_tokens"`
-	OutputTokens    int64   `json:"output_tokens"`
-	ReasoningTokens int64   `json:"reasoning_tokens,omitzero"`
-	CacheReadTokens int64   `json:"cache_read_tokens,omitzero"`
-	CostUSD         float64 `json:"cost_usd,omitzero"`
-	JevTokens       int64   `json:"jev_tokens,omitzero"`
+	InputTokens     int64 `json:"input_tokens"`
+	OutputTokens    int64 `json:"output_tokens"`
+	ReasoningTokens int64 `json:"reasoning_tokens,omitzero"`
+	CacheReadTokens int64 `json:"cache_read_tokens,omitzero"`
+	JevTokens       int64 `json:"jev_tokens,omitzero"`
 }
 
 // Log appends events to a JSONL file. It is safe for concurrent use.

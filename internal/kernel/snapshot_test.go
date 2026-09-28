@@ -33,7 +33,7 @@ func TestTakeSnapshot(t *testing.T) {
 		"node_modules/dep/a.js": "ignored",
 		".git/config":           "ignored",
 	})
-	snap := TakeSnapshot(t.Context(), dir, 1000, "")
+	snap := TakeSnapshot(t.Context(), dir, 1000, "", nil)
 
 	if snap.Files != 4 || snap.Included != 3 {
 		t.Fatalf("Files=%d Included=%d, want 4 and 3", snap.Files, snap.Included)
@@ -64,7 +64,7 @@ func TestLargeRepositorySnapshotShowsNamedCode(t *testing.T) {
 		"price_test.go": "package shop\n\nfunc TestPrice(t *testing.T) {}\n",
 		"big/parse.go":  "package big\n\n" + strings.Repeat("// filler\n", 2000) + "func parseAll() int {\n\treturn 1\n}\n",
 	})
-	snap := TakeSnapshot(t.Context(), dir, 4000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal`, update `config.yml`, and fix `parseAll`.")
+	snap := TakeSnapshot(t.Context(), dir, 4000, "Rename `shop.computeTotal(qty, unit)` to `sumTotal`, update `config.yml`, and fix `parseAll`.", nil)
 	for _, want := range []string{
 		"too large to include in full", "- notes.md", "- price.go",
 		`<file path="price.go">`, "func computeTotal(qty, unit int) int {",

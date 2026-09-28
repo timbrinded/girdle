@@ -75,8 +75,9 @@ func unitAround(lines []string, i int, ext string) (start, end int, ok bool) {
 	return 0, 0, false
 }
 
-// blockEnd is where the definition starting at lines[start] ends, by the
-// same rules as extractBody but without its length cap.
+// blockEnd is where the definition starting at lines[start] ends: for Python
+// the indented block, for brace languages the matching closing brace. A
+// declaration with no body before a blank line ends where it starts.
 func blockEnd(lines []string, start int, ext string) int {
 	end := start
 	if ext == ".py" {

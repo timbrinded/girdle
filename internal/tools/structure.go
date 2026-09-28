@@ -9,9 +9,8 @@ import (
 	"strings"
 )
 
-// A unit is a top-level piece of a source file as its parser sees it: a
-// function, method, type, class, or top-level statement. ast-grep does the
-// parsing, so the leftover check below tells code from prose exactly.
+// The leftover check asks ast-grep for a file's top-level definitions, so it
+// tells code from prose exactly, which a text search can't.
 
 // unitRules holds one ast-grep rule per language: the node kinds that sit
 // directly under the file's root.
@@ -54,7 +53,7 @@ func Mentions(ctx context.Context, dir, name string, limit int) []string {
 	if !identifier.MatchString(name) {
 		return nil
 	}
-	out, err := Search(ctx, dir, `\b`+name+`\b`, "", "", false)
+	out, err := Search(ctx, dir, `\b`+name+`\b`, "", false)
 	if err != nil || strings.HasPrefix(out, "no matches") {
 		return nil
 	}

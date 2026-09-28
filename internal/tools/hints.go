@@ -147,7 +147,7 @@ func goExports(pkgDir string) string {
 }
 
 func goMethods(ctx context.Context, dir, typeName string) string {
-	out, err := Search(ctx, dir, `^func \(\w+ \*?`+regexp.QuoteMeta(typeName)+`(\[[^\]]*\])?\) [A-Z]\w*`, "", "*.go", false)
+	out, err := Search(ctx, dir, `^func \(\w+ \*?`+regexp.QuoteMeta(typeName)+`(\[[^\]]*\])?\) [A-Z]\w*`, "*.go", false)
 	if err != nil || strings.HasPrefix(out, "no matches") {
 		return ""
 	}

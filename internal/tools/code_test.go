@@ -66,15 +66,15 @@ func TestSearch(t *testing.T) {
 		"a.go": "package a\nfunc IndentWidth() {}\n",
 		"b.go": "package b\nvar x = a.IndentWidth()\n// indentwidth in lower case\n",
 	})
-	out, err := Search(t.Context(), dir, `\bIndentWidth\b`, "", "", false)
+	out, err := Search(t.Context(), dir, `\bIndentWidth\b`, "", false)
 	if err != nil || !strings.Contains(out, "a.go:2:func IndentWidth") || !strings.Contains(out, "b.go:2:") || strings.Contains(out, "lower case") {
 		t.Fatalf("search = %q, %v", out, err)
 	}
-	out, _ = Search(t.Context(), dir, `indentwidth`, "", "*.go", true)
+	out, _ = Search(t.Context(), dir, `indentwidth`, "*.go", true)
 	if !strings.Contains(out, "b.go:3:// indentwidth") || !strings.Contains(out, "a.go:2:") {
 		t.Fatalf("ignore case: %q", out)
 	}
-	out, _ = Search(t.Context(), dir, `nothing here`, "", "", false)
+	out, _ = Search(t.Context(), dir, `nothing here`, "", false)
 	if !strings.HasPrefix(out, "no matches") {
 		t.Fatalf("no match: %q", out)
 	}
@@ -117,7 +117,7 @@ func TestEditIgnoresWhitespace(t *testing.T) {
 func TestApplyWithOnlyACheck(t *testing.T) {
 	dir := writeTree(t, map[string]string{"a.txt": "hi\n"})
 	var apply fantasy.AgentTool
-	for _, tool := range Batched(dir) {
+	for _, tool := range fastTools(dir) {
 		if tool.Info().Name == "apply" {
 			apply = tool
 		}
@@ -137,7 +137,7 @@ func TestLookup(t *testing.T) {
 		"b.txt": "one\ntwo\nthree\nfour\n",
 	})
 	var lookup fantasy.AgentTool
-	for _, tool := range Batched(dir) {
+	for _, tool := range fastTools(dir) {
 		if tool.Info().Name == "lookup" {
 			lookup = tool
 		}
@@ -182,4 +182,10 @@ func TestParseRange(t *testing.T) {
 			t.Errorf("parseRange(%q) = %q, %d, %d", c.in, p, o, l)
 		}
 	}
+}
+
+// fastTools are the fast flow's tools for dir, with reproduce on.
+func fastTools(dir string) []fantasy.AgentTool {
+	ts, _ := BatchedWithReset(dir, true, Options{})
+	return ts
 }

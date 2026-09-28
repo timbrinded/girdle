@@ -95,13 +95,7 @@ func NewFromEnv() (*Client, error) {
 	if key == "" {
 		return nil, ErrNoAPIKey
 	}
-	return &Client{
-		BaseURL:    cmp.Or(os.Getenv("GIRDLE_JEV_URL"), DefaultBaseURL),
-		Model:      cmp.Or(os.Getenv("GIRDLE_JEV_MODEL"), DefaultModel),
-		APIKey:     key,
-		HTTP:       &http.Client{Timeout: 20 * time.Second},
-		MaxRetries: 3,
-	}, nil
+	return New(cmp.Or(os.Getenv("GIRDLE_JEV_URL"), DefaultBaseURL), cmp.Or(os.Getenv("GIRDLE_JEV_MODEL"), DefaultModel), key), nil
 }
 
 // StatusError is a non-retryable HTTP error from the API.

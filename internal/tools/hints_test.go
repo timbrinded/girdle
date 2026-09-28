@@ -56,7 +56,7 @@ func TestHintsPythonAndJS(t *testing.T) {
 func TestApplyAddsHintsBeforeTheExitCode(t *testing.T) {
 	dir := writeTree(t, map[string]string{"pkg/invoice.py": "def line_total(q, p):\n    return q * p\n"})
 	var apply fantasy.AgentTool
-	for _, tool := range Batched(dir) {
+	for _, tool := range fastTools(dir) {
 		if tool.Info().Name == "apply" {
 			apply = tool
 		}

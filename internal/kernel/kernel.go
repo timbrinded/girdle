@@ -179,9 +179,10 @@ func NewSession(cfg Config) *Session {
 		cfg.MaxStepsPerTurn = 60
 	}
 	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
-	s.tools = tools.All(cfg.Dir, s.toolOptions())
 	if cfg.Batch {
 		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
+	} else {
+		s.tools = tools.All(cfg.Dir, s.toolOptions())
 	}
 	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
 	s.agent = fantasy.NewAgent(
@@ -264,8 +265,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			}
 		}
 		wg.Go(func() {
-			snap = TakeSnapshotWith(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt,
-				SnapshotOptions{Pick: pick})
+			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
 	if s.routingOn() && s.cfg.Speculate {
@@ -340,7 +340,7 @@ func (s *Session) routingOn() bool {
 }
 
 func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.RouteDecision {
-	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy, checkpoint.EffortMedium)
+	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy)
 }
 
 func (s *Session) applyRoute(d checkpoint.RouteDecision) {
@@ -514,7 +514,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			return nil
 		},
 		OnToolResult: func(tr fantasy.ToolResultContent) error {
-			text, isErr := resultText(tr)
+			text, isErr := outputText(tr.Result)
 			s.emit(Event{Type: EventToolResult, Tool: tr.ToolName, CallID: tr.ToolCallID, Text: clipMiddle(text, 4000), IsError: isErr})
 			s.steps = append(s.steps, summarizeStep(calls[tr.ToolCallID], text))
 			s.noteResult(calls[tr.ToolCallID], text, isErr)
@@ -786,11 +786,13 @@ Writing takes time too, so write as little as the task allows. Change existing f
 	return b.String()
 }
 
-func resultText(tr fantasy.ToolResultContent) (string, bool) {
-	if t, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](tr.Result); ok {
+// outputText is a tool result's text, and whether the tool reported an
+// error.
+func outputText(o fantasy.ToolResultOutputContent) (string, bool) {
+	if t, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](o); ok {
 		return t.Text, false
 	}
-	if e, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](tr.Result); ok && e.Error != nil {
+	if e, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](o); ok && e.Error != nil {
 		return e.Error.Error(), true
 	}
 	return "", false

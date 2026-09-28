@@ -10,18 +10,12 @@ import (
 	"charm.land/fantasy"
 )
 
-// Batched returns the tools for the fast flow: lookup, apply and bash.
-// Each LLM step costs seconds of latency, so both working tools take lists:
-// lookup fetches every file, definition and search the model needs in one
-// call, and apply makes every change and runs the check that verifies them.
-func Batched(dir string) []fantasy.AgentTool {
-	ts, _ := BatchedWithReset(dir, true, Options{})
-	return ts
-}
-
-// BatchedWithReset returns the fast-flow tools and a function the kernel
-// calls at the start of each request, so apply's reproduce knows what the
-// request has changed.
+// BatchedWithReset returns the fast flow's tools, lookup, apply and bash, and
+// a function the kernel calls at the start of each request, so apply's
+// reproduce knows what the request has changed. Each LLM step costs seconds
+// of latency, so both working tools take lists: lookup fetches every file,
+// definition and search the model needs in one call, and apply makes every
+// change and runs the check that verifies them.
 func BatchedWithReset(dir string, reproduce bool, opts Options) ([]fantasy.AgentTool, func()) {
 	t := newToolset(dir, opts)
 	reset := func() {}

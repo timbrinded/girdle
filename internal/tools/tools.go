@@ -52,8 +52,8 @@ type Options struct {
 	GrepContext bool
 }
 
-// offlineProfile is the macOS sandbox profile for offline commands.
-const offlineProfile = `(version 1)(allow default)(deny network-outbound (remote ip))(allow network-outbound (remote ip "localhost:*"))`
+// offlineRules deny outbound network access except to this machine.
+const offlineRules = `(deny network-outbound (remote ip))(allow network-outbound (remote ip "localhost:*"))`
 
 // sandboxProfile is the macOS sandbox profile for shell commands: offline if
 // asked, and unable to read denied paths except inside dir.
@@ -62,7 +62,7 @@ func sandboxProfile(dir string, offline bool, deny []*regexp.Regexp) string {
 	var b strings.Builder
 	b.WriteString("(version 1)(allow default)")
 	if offline {
-		b.WriteString(strings.TrimPrefix(offlineProfile, "(version 1)(allow default)"))
+		b.WriteString(offlineRules)
 	}
 	if len(deny) > 0 {
 		for _, re := range deny {
@@ -147,10 +147,11 @@ type readInput struct {
 }
 
 func (t toolset) read(_ context.Context, in readInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	if p := t.path(in.Path); t.denied(p) {
+	p := t.path(in.Path)
+	if t.denied(p) {
 		return deniedError(p), nil
 	}
-	data, err := os.ReadFile(t.path(in.Path))
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}

@@ -3,7 +3,6 @@ package kernel
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"charm.land/fantasy"
 
@@ -49,7 +48,7 @@ func (s *Session) compact(ctx context.Context, task string, msgs []fantasy.Messa
 				calls[tc.ToolCallID] = tc.ToolName + " " + clipMiddle(oneLine(tc.Input), 200)
 			}
 			if tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part); ok {
-				text := toolResultText(tr)
+				text, _ := outputText(tr.Output)
 				if len(text) >= p.MinBytes && !s.pruned[tr.ToolCallID] {
 					results = append(results, candidate{tr.ToolCallID, calls[tr.ToolCallID] + " -> " + clipMiddle(oneLine(text), 600)})
 				}
@@ -99,14 +98,4 @@ func stubPruned(msgs []fantasy.Message, pruned map[string]bool) []fantasy.Messag
 		}
 	}
 	return out
-}
-
-func toolResultText(tr fantasy.ToolResultPart) string {
-	if t, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](tr.Output); ok {
-		return t.Text
-	}
-	if e, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](tr.Output); ok && e.Error != nil {
-		return e.Error.Error()
-	}
-	return strings.TrimSpace(fmt.Sprint(tr.Output))
 }

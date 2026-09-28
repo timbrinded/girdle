@@ -64,9 +64,9 @@ type RouteDecision struct {
 }
 
 // Route picks the reasoning effort for a request. If Jev is unreachable it
-// falls back to fallback.
-func Route(ctx context.Context, c *jev.Client, s RouteState, p RoutePolicy, fallback Effort) RouteDecision {
-	d := RouteDecision{Checkpoint: "route", State: s, Effort: fallback}
+// falls back to medium.
+func Route(ctx context.Context, c *jev.Client, s RouteState, p RoutePolicy) RouteDecision {
+	d := RouteDecision{Checkpoint: "route", State: s, Effort: EffortMedium}
 	start := time.Now()
 	res, err := c.Ask(ctx, s, RouteQuestions)
 	d.LatencyMS = time.Since(start).Milliseconds()

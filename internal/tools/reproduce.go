@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // A regression test proves a fix only if it fails without the fix. apply
@@ -27,11 +28,6 @@ type originals struct {
 type fileState struct {
 	data   []byte
 	exists bool
-}
-
-func readState(p string) fileState {
-	data, err := os.ReadFile(p)
-	return fileState{data, err == nil}
 }
 
 func (st fileState) restore(p string) {
@@ -80,7 +76,8 @@ func (o *originals) codeFiles(dir string) []string {
 func (t toolset) withOriginals(paths []string, fn func()) {
 	now := map[string]fileState{}
 	for _, p := range paths {
-		now[p] = readState(p)
+		data, err := os.ReadFile(p)
+		now[p] = fileState{data, err == nil}
 	}
 	defer func() {
 		for p, st := range now {
@@ -132,7 +129,7 @@ func clipTail(s string, n int) string {
 		return s
 	}
 	cut := len(s) - n
-	for cut < len(s) && !isRuneStart(s[cut]) {
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
 		cut++
 	}
 	return "…" + s[cut:]

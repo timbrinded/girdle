@@ -77,7 +77,7 @@ func TestPrefetchAddsPickedFiles(t *testing.T) {
 		}
 		return checkpoint.Prefetch{Scores: map[string]float64{"helper.go": 0.9, "big.go": 0.8, "other.go": 0.2}}
 	}
-	snap := TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
+	snap := TakeSnapshot(t.Context(), dir, 16<<10, "Change `Foo`.", pick)
 	slices.Sort(asked)
 	// big.go is too large to show whole, and a.go is already shown.
 	if !slices.Equal(asked, []string{"helper.go", "other.go"}) {
@@ -114,7 +114,7 @@ func TestPrefetchSkipsDataInABigRepository(t *testing.T) {
 		}
 		return checkpoint.Prefetch{}
 	}
-	TakeSnapshotWith(t.Context(), dir, 16<<10, "Change `Foo`.", SnapshotOptions{Pick: pick})
+	TakeSnapshot(t.Context(), dir, 16<<10, "Change `Foo`.", pick)
 	slices.Sort(asked)
 	if !slices.Equal(asked, []string{"lex.go", "parse.go"}) {
 		t.Fatalf("asked about %v, not just the code", asked)

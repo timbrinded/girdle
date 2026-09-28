@@ -104,7 +104,7 @@ func TestApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	var apply fantasy.AgentTool
-	for _, tool := range Batched(dir) {
+	for _, tool := range fastTools(dir) {
 		if tool.Info().Name == "apply" {
 			apply = tool
 		}
@@ -157,7 +157,7 @@ func TestApply(t *testing.T) {
 
 func TestBatchedRequiredParams(t *testing.T) {
 	want := map[string][]string{"lookup": nil, "apply": {"changes", "check"}, "bash": {"command"}}
-	for _, tool := range Batched(t.TempDir()) {
+	for _, tool := range fastTools(t.TempDir()) {
 		info := tool.Info()
 		got := slices.Sorted(slices.Values(info.Required))
 		if !slices.Equal(got, want[info.Name]) {

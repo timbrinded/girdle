@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"os"
@@ -238,7 +239,7 @@ func ReadShell(ctx context.Context, line, project, home string) (ShellFacts, err
 		case slices.Contains(pythons, name) && slices.Contains(args, "-c"):
 			f.InlineEffects = append(f.InlineEffects, inlineEffects(ctx, "python", argAfter(args, "-c"))...)
 		case slices.Contains(scripts, name) && (slices.Contains(args, "-e") || slices.Contains(args, "--eval")):
-			f.InlineEffects = append(f.InlineEffects, inlineEffects(ctx, "javascript", cmpOr(argAfter(args, "-e"), argAfter(args, "--eval")))...)
+			f.InlineEffects = append(f.InlineEffects, inlineEffects(ctx, "javascript", cmp.Or(argAfter(args, "-e"), argAfter(args, "--eval")))...)
 		case slices.Contains(others, name) && slices.ContainsFunc(args, func(a string) bool { return a == "-e" || a == "-r" || a == "-E" }):
 			f.InlineEffects = append(f.InlineEffects, name+" inline code")
 		}
@@ -289,7 +290,7 @@ func (f ShellFacts) Floor() string {
 	for _, refs := range f.ForcePushes {
 		for _, r := range refs {
 			_, branch, _ := strings.Cut(r, ":")
-			branch = cmpOr(branch, r)
+			branch = cmp.Or(branch, r)
 			if slices.Contains(sharedRefs, branch) || strings.HasPrefix(branch, "release") {
 				return "it force-pushes or deletes a shared branch: " + strings.Join(refs, ", ")
 			}
@@ -459,10 +460,3 @@ func isNumber(s string) bool {
 }
 
 func first(s []string, n int) []string { return s[:min(len(s), n)] }
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}

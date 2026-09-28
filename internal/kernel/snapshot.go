@@ -5,10 +5,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"io/fs"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -34,12 +32,6 @@ type Snapshot struct {
 	Candidates int
 }
 
-// SnapshotOptions are the extras a snapshot of a large repository can add.
-type SnapshotOptions struct {
-	// Pick judges which other files the request needs.
-	Pick Picker
-}
-
 // Picker judges how likely a request is to need each file.
 type Picker func(ctx context.Context, request string, files []checkpoint.FileOutline) checkpoint.Prefetch
 
@@ -53,25 +45,16 @@ const (
 	wholeFileMax = 16 << 10
 )
 
-// skipDirs are never worth sending when the directory isn't a git repo:
-// version control data, dependencies and build output.
-var skipDirs = []string{".git", "node_modules", "vendor", ".venv", "venv", "__pycache__", "dist", "build", "target", ".next", ".cache"}
-
 // TakeSnapshot describes dir for a request. When every text file fits in
 // budget bytes, it includes them all. A larger repository gets its file list
 // plus the definitions and uses of the code the request names in backticks,
 // found by exact lookup: filling the budget in path order mostly sent docs.
-func TakeSnapshot(ctx context.Context, dir string, budget int, request string) Snapshot {
-	return TakeSnapshotWith(ctx, dir, budget, request, SnapshotOptions{})
-}
-
-// TakeSnapshotWith is TakeSnapshot with extras for a large repository: the
-// code around the named code, and the files a picker judges the request
-// most likely to need.
-func TakeSnapshotWith(ctx context.Context, dir string, budget int, request string, opts SnapshotOptions) Snapshot {
-	paths := listFiles(ctx, dir)
+// With a picker, it also gets the files the picker judges the request most
+// likely to need.
+func TakeSnapshot(ctx context.Context, dir string, budget int, request string, pick Picker) Snapshot {
+	paths := tools.SourceFiles(ctx, dir)
 	if total := textBytes(dir, paths); total > budget {
-		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, opts)
+		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, pick)
 	}
 	var snap Snapshot
 	snap.Files = len(paths)
@@ -91,7 +74,7 @@ func TakeSnapshotWith(ctx context.Context, dir string, budget int, request strin
 			note = fmt.Sprintf("%d lines", bytes.Count(data, []byte{'\n'})+1)
 			snap.Included++
 			snap.Bytes += len(data)
-			fmt.Fprintf(&files, "<file path=%q>\n%s\n</file>\n", p, strings.TrimRight(string(data), "\n"))
+			files.WriteString(fileBlock(p, data))
 		}
 		if i < maxListed {
 			fmt.Fprintf(&list, "- %s (%s)\n", p, note)
@@ -111,42 +94,9 @@ func TakeSnapshotWith(ctx context.Context, dir string, budget int, request strin
 	return snap
 }
 
-// listFiles returns dir's files relative to dir, sorted. It asks git first,
-// since git knows what is ignored, and walks the tree otherwise.
-func listFiles(ctx context.Context, dir string) []string {
-	// An empty answer means dir is ignored by an enclosing repository:
-	// walk it instead.
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
-	if err == nil && len(out) > 0 {
-		var paths []string
-		for p := range strings.SplitSeq(string(out), "\x00") {
-			if p != "" {
-				paths = append(paths, p)
-			}
-		}
-		slices.Sort(paths)
-		return slices.Compact(paths)
-	}
-	var paths []string
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if path != dir && slices.Contains(skipDirs, d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type().IsRegular() {
-			if rel, err := filepath.Rel(dir, path); err == nil {
-				paths = append(paths, filepath.ToSlash(rel))
-			}
-		}
-		return nil
-	})
-	slices.Sort(paths)
-	return paths
+// fileBlock is a file's whole text as a snapshot shows it.
+func fileBlock(path string, data []byte) string {
+	return fmt.Sprintf("<file path=%q>\n%s\n</file>\n", path, strings.TrimRight(string(data), "\n"))
 }
 
 func isBinary(data []byte) bool {
@@ -203,7 +153,7 @@ func NamedCode(request string, isFile func(string) bool) (files, names []string)
 
 var identifierName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{2,}$`)
 
-func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, budget int, request string, opts SnapshotOptions) Snapshot {
+func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, budget int, request string, pick Picker) Snapshot {
 	snap := Snapshot{Files: len(paths)}
 	var list strings.Builder
 	for i, p := range paths {
@@ -227,7 +177,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		data, err := os.ReadFile(filepath.Join(dir, f))
 		switch {
 		case err != nil || isBinary(data):
-		case len(data) <= budget/4 && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", f, strings.TrimRight(string(data), "\n"))):
+		case len(data) <= budget/4 && add(fileBlock(f, data)):
 			snap.Included++
 		default:
 			add(fmt.Sprintf("<file path=%q>%s, %d lines: too large to include; look up the parts you need</file>\n", f, size(len(data)), bytes.Count(data, []byte{'\n'})+1))
@@ -251,7 +201,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 			// the model reads it first anyway.
 			if !slices.Contains(shown, d.Path) {
 				data, err := os.ReadFile(filepath.Join(dir, d.Path))
-				if err == nil && len(data) <= wholeFileMax && add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", d.Path, strings.TrimRight(string(data), "\n"))) {
+				if err == nil && len(data) <= wholeFileMax && add(fileBlock(d.Path, data)) {
 					snap.Included++
 					shown = append(shown, d.Path)
 				} else {
@@ -270,7 +220,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		if len(defs) == 0 && strings.ToLower(name) == name {
 			continue
 		}
-		if uses, err := tools.Search(ctx, dir, `\b`+name+`\b`, "", "", false); err == nil {
+		if uses, err := tools.Search(ctx, dir, `\b`+name+`\b`, "", false); err == nil {
 			add(fmt.Sprintf("<uses name=%q>\n%s\n</uses>\n", name, clipLines(uses, 40)))
 		}
 	}
@@ -278,8 +228,8 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 		shown = append(shown, t)
 		addFile(t)
 	}
-	if opts.Pick != nil {
-		prefetch(ctx, dir, paths, shown, request, opts, add, &snap)
+	if pick != nil {
+		prefetch(ctx, dir, paths, shown, request, pick, add, &snap)
 	}
 
 	var b strings.Builder
@@ -396,7 +346,7 @@ func outline(data []byte) string {
 // and adds the likeliest that are small enough to show whole. An outline of
 // a large file saved no lookups, since the LLM still had to look up the
 // range it needed, and it slowed runs down (decision 0013).
-func prefetch(ctx context.Context, dir string, paths, shown []string, request string, opts SnapshotOptions, add func(string) bool, snap *Snapshot) {
+func prefetch(ctx context.Context, dir string, paths, shown []string, request string, pick Picker, add func(string) bool, snap *Snapshot) {
 	data := map[string][]byte{}
 	var cands, code []checkpoint.FileOutline
 	for _, p := range paths {
@@ -425,7 +375,7 @@ func prefetch(ctx context.Context, dir string, paths, shown []string, request st
 	if len(cands) == 0 {
 		return
 	}
-	snap.Prefetch = opts.Pick(ctx, request, cands)
+	snap.Prefetch = pick(ctx, request, cands)
 	ranked := slices.SortedFunc(maps.Keys(snap.Prefetch.Scores), func(a, b string) int {
 		return cmp.Or(cmp.Compare(snap.Prefetch.Scores[b], snap.Prefetch.Scores[a]), cmp.Compare(a, b))
 	})
@@ -437,7 +387,7 @@ func prefetch(ctx context.Context, dir string, paths, shown []string, request st
 		if !ok {
 			continue
 		}
-		if add(fmt.Sprintf("<file path=%q>\n%s\n</file>\n", p, strings.TrimRight(string(b), "\n"))) {
+		if add(fileBlock(p, b)) {
 			snap.Included++
 			snap.Prefetched = append(snap.Prefetched, p)
 		}

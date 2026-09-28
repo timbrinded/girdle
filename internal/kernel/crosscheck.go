@@ -131,12 +131,8 @@ func (s *Session) runCrossCheck(ctx context.Context) string {
 	case <-ctx.Done():
 		return ""
 	}
-	if cc == nil || cc.none != "" {
-		why := "no answer"
-		if cc != nil {
-			why = cc.none
-		}
-		s.emit(Event{Type: EventCrossCheck, Reason: "none written", Text: why})
+	if cc.none != "" {
+		s.emit(Event{Type: EventCrossCheck, Reason: "none written", Text: cc.none})
 		return ""
 	}
 
