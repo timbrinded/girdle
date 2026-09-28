@@ -10,22 +10,36 @@ import (
 	"github.com/timbrinded/girdle/internal/jev"
 )
 
+// Settings are the choices a user can change between requests: the model
+// and its reasoning effort.
+type Settings struct {
+	Model     fantasy.LanguageModel
+	ModelName string
+	// Efforts are the reasoning efforts the model accepts, lowest first.
+	// Each request asks for the nearest of them (checkpoint.Effort.Fit).
+	// Empty means the model has no effort setting, and none is sent.
+	Efforts []checkpoint.Effort
+	// AutoEffort lets Jev's route choose each request's reasoning effort.
+	// Without it, or when Jev can't route, requests use Effort.
+	AutoEffort bool
+	Effort     checkpoint.Effort
+}
+
 // Config wires a session together.
 type Config struct {
-	Model           fantasy.LanguageModel
-	ModelName       string
-	ProviderOptions fantasy.ProviderOptions
-	Jev             *jev.Client
-	Dir             string
-	Policy          checkpoint.Policy
+	Settings
+	Jev    *jev.Client
+	Dir    string
+	Policy checkpoint.Policy
 	// Checkpoints turns the Jev turn-end checkpoint on. When false, every
 	// turn end stops the run, as in a plain agent loop.
 	Checkpoints bool
-	// Route asks Jev how hard each request is and sets the reasoning effort.
+	// Route asks Jev how hard each request is, and whether it asks for
+	// tests. With AutoEffort, the answer sets the request's reasoning effort.
 	Route       bool
 	RoutePolicy checkpoint.RoutePolicy
-	// EffortOptions builds provider options for a reasoning effort. Required
-	// when Route is on.
+	// EffortOptions builds provider options for a reasoning effort. Without
+	// it, no effort is sent.
 	EffortOptions   func(checkpoint.Effort) fantasy.ProviderOptions
 	MaxStepsPerTurn int
 	Emit            func(Event)
@@ -54,7 +68,9 @@ type Config struct {
 	Race  int
 	Hedge time.Duration
 	// Speculate starts a request's first LLM call on the usual effort while
-	// Jev routes it, instead of waiting for the route. It needs Route.
+	// Jev routes it, instead of waiting for the route. It needs Route, and
+	// acts only while Jev chooses the effort (AutoEffort), which settings
+	// can change between requests.
 	Speculate bool
 	// CrossCheck writes an independent test of each request in the
 	// background and runs it once the agent's own check passes. It needs
@@ -95,7 +111,8 @@ type Config struct {
 // features' dependencies on each other are written down.
 func (c Config) resolved() Config {
 	judged := c.Checkpoints && c.Jev != nil
-	c.Route = c.Route && c.Jev != nil && c.EffortOptions != nil
+	c.Route = c.Route && c.Jev != nil
+	c.AutoEffort = c.AutoEffort && c.canAutoEffort()
 	c.Speculate = c.Speculate && c.Route
 	c.EarlyStop = c.EarlyStop && judged
 	c.CrossCheck = c.CrossCheck && c.Batch && c.EarlyStop
@@ -108,4 +125,19 @@ func (c Config) resolved() Config {
 		c.MaxStepsPerTurn = 60
 	}
 	return c
+}
+
+// canAutoEffort reports whether Jev can choose request efforts.
+func (c Config) canAutoEffort() bool {
+	return c.Route && c.Jev != nil && c.EffortOptions != nil
+}
+
+// effort fits e to the model and builds the provider options that ask for
+// it. A model with no effort setting is asked for none.
+func (c Config) effort(e checkpoint.Effort) (checkpoint.Effort, fantasy.ProviderOptions) {
+	e = e.Fit(c.Efforts)
+	if e == "" || c.EffortOptions == nil {
+		return e, nil
+	}
+	return e, c.EffortOptions(e)
 }

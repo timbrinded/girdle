@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,10 +37,14 @@ const (
 
 // Session is one conversation in one working directory.
 type Session struct {
-	ID    string
-	cfg   Config
-	model sessionModel // cfg.Model, raced if cfg.Race asks for it
-	tools []fantasy.AgentTool
+	ID  string
+	cfg Config
+	// next holds settings Configure left for the next request.
+	next atomic.Pointer[Settings]
+	// canAuto is set when Jev can choose request efforts.
+	canAuto bool
+	model   sessionModel // cfg.Model, raced if cfg.Race asks for it
+	tools   []fantasy.AgentTool
 	// resetTools tells the tools a new request has started.
 	resetTools func()
 	// pruned holds the tool calls whose output compaction replaced.
@@ -52,8 +57,9 @@ type Session struct {
 	usage   Usage
 	// callOptions override the agent's provider options for this run.
 	callOptions fantasy.ProviderOptions
-	// routing delivers Jev's route while the first call runs on a guess.
-	routing chan checkpoint.RouteDecision
+	// pendingRoute delivers Jev's route when the request didn't wait for
+	// it (route).
+	pendingRoute chan checkpoint.RouteDecision
 	// called is set once a request's first LLM call has started.
 	called atomic.Bool
 	// cross delivers this request's cross-check, until it has run.
@@ -113,22 +119,14 @@ func (s *Session) stopTurn(h halt) {
 // NewSession builds a session with the four built-in tools.
 func NewSession(cfg Config) *Session {
 	cfg = cfg.resolved()
-	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
+	s := &Session{ID: uuid.New().String(), cfg: cfg, canAuto: cfg.canAutoEffort(), edited: map[string]bool{}}
 	if cfg.Batch {
 		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
 	} else {
 		s.tools = tools.All(cfg.Dir, s.toolOptions())
 	}
-	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
-	s.agent = fantasy.NewAgent(
-		s.model,
-		fantasy.WithSystemPrompt(systemPrompt(cfg)),
-		fantasy.WithTools(s.tools...),
-		fantasy.WithStopConditions(fantasy.StepCountIs(cfg.MaxStepsPerTurn)),
-		fantasy.WithProviderOptions(cfg.ProviderOptions),
-	)
-	s.emit(Event{Type: EventSessionStart, Meta: map[string]string{
-		"model":       cfg.ModelName,
+	s.useModel()
+	meta := map[string]string{
 		"jev_model":   jevModel(cfg.Jev),
 		"dir":         cfg.Dir,
 		"checkpoints": fmt.Sprint(cfg.Checkpoints),
@@ -147,7 +145,9 @@ func NewSession(cfg Config) *Session {
 		"tripwire":    fmt.Sprint(cfg.Tripwire),
 		"leftovers":   fmt.Sprint(cfg.Leftovers),
 		"grepctx":     fmt.Sprint(cfg.GrepContext),
-	}})
+	}
+	maps.Copy(meta, s.settingsMeta())
+	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	return s
 }
 
@@ -180,6 +180,7 @@ func (s *Session) Seed(msgs []fantasy.Message) {
 
 // Run sends prompt and works until the task is done or the user is needed.
 func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
+	s.applySettings()
 	s.emit(Event{Type: EventUserMessage, Text: prompt})
 	s.task = prompt
 	s.resetFacts()
@@ -203,15 +204,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
-	if s.cfg.Speculate {
-		// The goroutine gets its own copy of the channel: the first LLM call
-		// takes s.routing and clears it, possibly before the goroutine runs.
-		routing := make(chan checkpoint.RouteDecision, 1)
-		s.routing = routing
-		go func() { routing <- s.routeDecision(ctx, prompt) }()
-	} else {
-		s.route(ctx, prompt)
-	}
+	s.route(ctx, prompt)
 	wg.Wait()
 	msg := prompt
 	if s.cfg.Snapshot {
@@ -247,6 +240,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 
 // Resume evaluates the seeded conversation's last turn first, then carries on.
 func (s *Session) Resume(ctx context.Context, task string) (Outcome, string) {
+	s.applySettings()
 	s.resetFacts()
 	s.route(ctx, task)
 	return s.loop(ctx, task, false)
@@ -260,25 +254,9 @@ func (s *Session) resetFacts() {
 	s.intent, s.gone, s.leftoverNudges = nil, nil, 0
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
-}
-
-// route asks Jev how hard the request is and sets this run's reasoning effort.
-func (s *Session) route(ctx context.Context, request string) {
-	s.callOptions = nil
-	if s.cfg.Route {
-		s.applyRoute(s.routeDecision(ctx, request))
-	}
-}
-
-func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.RouteDecision {
-	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy)
-}
-
-func (s *Session) applyRoute(d checkpoint.RouteDecision) {
-	s.addUsage(Usage{JevTokens: d.InputTokens})
-	s.testsAsked = d.Tests
-	s.callOptions = s.cfg.EffortOptions(d.Effort)
-	s.emit(Event{Type: EventRoute, Route: &d})
+	_, s.callOptions = s.cfg.effort(s.cfg.Effort)
+	// A route still on its way belongs to the last request.
+	s.pendingRoute = nil
 }
 
 func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome, string) {
@@ -548,6 +526,8 @@ func (s *Session) noteRace(r race.Result) {
 }
 
 func (s *Session) end(o Outcome, reason string) (Outcome, string) {
+	// Log a route the request didn't wait for, if it came.
+	s.takeRoute(context.Background(), false)
 	u := s.Usage()
 	s.emit(Event{Type: EventRunEnd, Outcome: o, Reason: reason, Usage: &u})
 	return o, reason

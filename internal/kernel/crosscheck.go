@@ -50,11 +50,13 @@ type crossCheck struct {
 func (s *Session) startCrossCheck(ctx context.Context) {
 	ch := make(chan *crossCheck, 1)
 	s.cross = ch
-	history := slices.Clone(s.history)
-	go func() { ch <- s.writeCrossCheck(ctx, history) }()
+	// The writer gets its own copies: it may still be running when the next
+	// request changes the model.
+	cfg, history := s.cfg, slices.Clone(s.history)
+	go func() { ch <- s.writeCrossCheck(ctx, cfg, history) }()
 }
 
-func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message) *crossCheck {
+func (s *Session) writeCrossCheck(ctx context.Context, cfg Config, history []fantasy.Message) *crossCheck {
 	var in tools.ApplyInput
 	recorded := false
 	record := fantasy.NewAgentTool("apply", tools.ApplyDescription,
@@ -64,13 +66,10 @@ func (s *Session) writeCrossCheck(ctx context.Context, history []fantasy.Message
 		})
 	// It is mechanical work, so it runs at low effort: a slow writer holds
 	// up a quick agent.
-	opts := s.cfg.ProviderOptions
-	if s.cfg.EffortOptions != nil {
-		opts = s.cfg.EffortOptions(checkpoint.EffortLow)
-	}
+	_, opts := cfg.effort(checkpoint.EffortLow)
 	// The writer is hedged: a copy that hasn't answered in 2 s gets company.
-	agent := fantasy.NewAgent(race.New(s.cfg.Model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace),
-		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
+	agent := fantasy.NewAgent(race.New(cfg.Model, 3, func() time.Duration { return 2 * time.Second }, s.noteRace),
+		fantasy.WithSystemPrompt(systemPrompt(cfg)),
 		fantasy.WithTools(record),
 		fantasy.WithProviderOptions(opts),
 	)

@@ -14,7 +14,23 @@ bin/girdle                           # TUI in the current directory
 bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it needs you (2)
 ```
 
-The default model is `stealth/space-bunny-alpha` on OpenRouter. It's free for now, and the fast flow is measured and tuned on it. It is an anonymous model whose provider may log prompts, so use it on public code only. It may also be withdrawn without notice. For private code, pick another with `-model` or `GIRDLE_MODEL`, for example `meta/muse-spark-1.3-contributor` ([decision 0021](docs/decisions/0021-default-model.md)).
+The default model is `stealth/space-bunny-alpha` on OpenRouter. It's free for now, and the fast flow is measured and tuned on it. It is an anonymous model whose provider may log prompts, so use it on public code only. It may also be withdrawn without notice. For private code, pick another in the model picker, or with `-model` or `GIRDLE_MODEL`, for example `meta/muse-spark-1.3-contributor` ([decision 0021](docs/decisions/0021-default-model.md)).
+
+### Models and reasoning effort
+
+In the TUI, `ctrl+l` (or `/model [search]`) opens the model picker. It lists every model your OpenRouter key can use that takes tool calls. Your models come first, and each row shows its price, context size and the reasoning efforts it accepts. Type to search.
+- `enter` switches to the highlighted model from the next request, and adds it to your models.
+- `ctrl+f` adds a model to your models, or removes it. Removing the model in use, or the default, hands its place to your most recently picked model.
+- `ctrl+s` makes the highlighted model, and the current effort, what new sessions start with, headless runs included. Without a saved default, Girdle starts on the model you picked last. `-model`, `GIRDLE_MODEL`, `-reasoning` and `-no-route` still override them.
+- `tab` lists the efforts for the current model.
+
+Outside the picker:
+- `ctrl+p` steps through your models.
+- `shift+tab` steps the reasoning effort, independently of the model: `auto`, where Jev chooses per request, then each effort the model accepts.
+- `/effort [level]` sets the effort or lists the choices.
+- `/model <id> [effort]` switches directly.
+
+A pinned effort the model doesn't accept is sent as the nearest one it does. If your key can no longer use a model, Girdle switches to the most recently picked one it can. See [decision 0023](docs/decisions/0023-model-picker.md).
 
 Useful flags:
 - `-C dir`, `-model`, `-reasoning` and `-log path`.

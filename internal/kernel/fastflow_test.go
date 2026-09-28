@@ -118,7 +118,7 @@ func TestFastFlowEndToEnd(t *testing.T) {
 			s := NewSession(Config{
 				Model: scriptedModel{}, ModelName: "scripted", Jev: fakeJev(t), Dir: dir,
 				Policy: checkpoint.DefaultPolicy, Checkpoints: true,
-				Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
+				Route: true, AutoEffort: true, Efforts: checkpoint.Efforts, RoutePolicy: checkpoint.DefaultRoutePolicy,
 				EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
 				Snapshot:      true, Batch: true, EarlyStop: true, StepPolicy: checkpoint.DefaultStepPolicy,
 				Race: race, Speculate: true,
@@ -201,7 +201,7 @@ func TestCrossCheck(t *testing.T) {
 			s := NewSession(Config{
 				Model: crossModel{crossPasses: passes}, ModelName: "scripted", Jev: fakeJev(t, map[string]float64{"test_at_fault": c.testAtFault}), Dir: dir,
 				Policy: checkpoint.DefaultPolicy, Checkpoints: true,
-				Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
+				Route: true, AutoEffort: true, Efforts: checkpoint.Efforts, RoutePolicy: checkpoint.DefaultRoutePolicy,
 				EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
 				Snapshot:      true, Batch: true, EarlyStop: true, StepPolicy: checkpoint.DefaultStepPolicy,
 				Race: 1, Speculate: true, CrossCheck: true,
@@ -259,7 +259,7 @@ func TestNoEarlyStopBeforeRequestedTests(t *testing.T) {
 	s := NewSession(Config{
 		Model: scriptedModel{}, ModelName: "scripted", Jev: fakeJev(t, map[string]float64{"tests": 0.9}), Dir: dir,
 		Policy: checkpoint.DefaultPolicy, Checkpoints: true,
-		Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy,
+		Route: true, AutoEffort: true, Efforts: checkpoint.Efforts, RoutePolicy: checkpoint.DefaultRoutePolicy,
 		EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
 		Snapshot:      true, Batch: true, EarlyStop: true, StepPolicy: checkpoint.DefaultStepPolicy,
 	})
