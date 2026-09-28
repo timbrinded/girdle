@@ -1,0 +1,53 @@
+diff --git a/_test/extra.txt b/_test/extra.txt
+index 8c86be9..851eddd 100644
+--- a/_test/extra.txt
++++ b/_test/extra.txt
+@@ -471,3 +471,13 @@ x \f
+ //- - - - - - - - -//
+ <p>x \f</p>
+ //= = = = = = = = = = = = = = = = = = = = = = = =//
++
++35: A link reference definition can contain a new line
++//- - - - - - - - -//
++This is a [test][foo
++bar] 1...2..3...
++
++[foo bar]: /
++//- - - - - - - - -//
++<p>This is a <a href="/">test</a> 1...2..3...</p>
++//= = = = = = = = = = = = = = = = = = = = = = = =//
+diff --git a/commonmark_test.go b/commonmark_test.go
+index e1a2d1b..7482ff1 100644
+--- a/commonmark_test.go
++++ b/commonmark_test.go
+@@ -29,12 +29,25 @@ func TestSpec(t *testing.T) {
+ 		panic(err)
+ 	}
+ 	cases := []testutil.MarkdownTestCase{}
++	nos := testutil.ParseCliCaseArg()
+ 	for _, c := range testCases {
+-		cases = append(cases, testutil.MarkdownTestCase{
+-			No:       c.Example,
+-			Markdown: c.Markdown,
+-			Expected: c.HTML,
+-		})
++		shouldAdd := len(nos) == 0
++		if !shouldAdd {
++			for _, no := range nos {
++				if c.Example == no {
++					shouldAdd = true
++					break
++				}
++			}
++		}
++
++		if shouldAdd {
++			cases = append(cases, testutil.MarkdownTestCase{
++				No:       c.Example,
++				Markdown: c.Markdown,
++				Expected: c.HTML,
++			})
++		}
+ 	}
+ 	markdown := New(WithRendererOptions(
+ 		html.WithXHTML(),

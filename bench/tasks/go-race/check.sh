@@ -1,0 +1,3 @@
+set -e
+cmp -s "$TASK_DIR/repo/counter_test.go" counter_test.go || { echo "FAIL: tests changed"; exit 1; }
+go test -race -count=1 ./...

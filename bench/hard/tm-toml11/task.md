@@ -1,0 +1,1 @@
+The decoder follows TOML 1.0, and TOML 1.1's changes are only available as an opt-in. Make TOML 1.1 the only behaviour: the toml-test suite must pass for version 1.1.0, so every 1.1 feature works by default, and every input that 1.1 makes invalid is rejected. `go test ./...` must pass.

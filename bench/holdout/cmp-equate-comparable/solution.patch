@@ -1,0 +1,77 @@
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index a85a606..e21ebfa 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -6,7 +6,7 @@ jobs:
+   test:
+     strategy:
+       matrix:
+-        go-version: [1.13.x, 1.14.x, 1.15.x, 1.16.x, 1.17.x, 1.18.x, 1.19.x, 1.20.x]
++        go-version: [1.18.x, 1.19.x, 1.20.x, 1.21.x]
+         os: [ubuntu-latest, macos-latest]
+     runs-on: ${{ matrix.os }}
+     steps:
+@@ -19,5 +19,5 @@ jobs:
+     - name: Test
+       run: go test -v -race ./...
+     - name: Format
+-      if: matrix.go-version == '1.20.x'
++      if: matrix.go-version == '1.21.x'
+       run: diff -u <(echo -n) <(gofmt -d .)
+diff --git a/cmp/cmpopts/equate.go b/cmp/cmpopts/equate.go
+index 90974e6..3d8d0cd 100644
+--- a/cmp/cmpopts/equate.go
++++ b/cmp/cmpopts/equate.go
+@@ -7,6 +7,7 @@ package cmpopts
+ 
+ import (
+ 	"errors"
++	"fmt"
+ 	"math"
+ 	"reflect"
+ 	"time"
+@@ -154,3 +155,31 @@ func compareErrors(x, y interface{}) bool {
+ 	ye := y.(error)
+ 	return errors.Is(xe, ye) || errors.Is(ye, xe)
+ }
++
++// EquateComparable returns a [cmp.Option] that determines equality
++// of comparable types by directly comparing them using the == operator in Go.
++// The types to compare are specified by passing a value of that type.
++// This option should only be used on types that are documented as being
++// safe for direct == comparison. For example, [net/netip.Addr] is documented
++// as being semantically safe to use with ==, while [time.Time] is documented
++// to discourage the use of == on time values.
++func EquateComparable(typs ...interface{}) cmp.Option {
++	types := make(typesFilter)
++	for _, typ := range typs {
++		switch t := reflect.TypeOf(typ); {
++		case !t.Comparable():
++			panic(fmt.Sprintf("%T is not a comparable Go type", typ))
++		case types[t]:
++			panic(fmt.Sprintf("%T is already specified", typ))
++		default:
++			types[t] = true
++		}
++	}
++	return cmp.FilterPath(types.filter, cmp.Comparer(equateAny))
++}
++
++type typesFilter map[reflect.Type]bool
++
++func (tf typesFilter) filter(p cmp.Path) bool { return tf[p.Last().Type()] }
++
++func equateAny(x, y interface{}) bool { return x == y }
+diff --git a/cmp/options.go b/cmp/options.go
+index 518b6ac..754496f 100644
+--- a/cmp/options.go
++++ b/cmp/options.go
+@@ -234,6 +234,8 @@ func (validator) apply(s *state, vx, vy reflect.Value) {
+ 			name = fmt.Sprintf("%q.%v", t.PkgPath(), t.Name()) // e.g., "path/to/package".MyType
+ 			if _, ok := reflect.New(t).Interface().(error); ok {
+ 				help = "consider using cmpopts.EquateErrors to compare error values"
++			} else if t.Comparable() {
++				help = "consider using cmpopts.EquateComparable to compare comparable Go types"
+ 			}
+ 		} else {
+ 			// Unnamed type with unexported fields. Derive PkgPath from field.

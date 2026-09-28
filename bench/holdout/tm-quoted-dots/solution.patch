@@ -1,0 +1,151 @@
+diff --git a/decode.go b/decode.go
+index 74b23df..e24f0c5 100644
+--- a/decode.go
++++ b/decode.go
+@@ -320,13 +320,13 @@ func (md *MetaData) unifyMap(mapping interface{}, rv reflect.Value) error {
+ 		md.decoded[md.context.add(k).String()] = struct{}{}
+ 		md.context = append(md.context, k)
+ 
+-		rvkey := indirect(reflect.New(rv.Type().Key()))
+ 		rvval := reflect.Indirect(reflect.New(rv.Type().Elem()))
+ 		if err := md.unify(v, rvval); err != nil {
+ 			return err
+ 		}
+ 		md.context = md.context[0 : len(md.context)-1]
+ 
++		rvkey := indirect(reflect.New(rv.Type().Key()))
+ 		rvkey.SetString(k)
+ 		rv.SetMapIndex(rvkey, rvval)
+ 	}
+diff --git a/encode.go b/encode.go
+index 9e5126f..dee4e6d 100644
+--- a/encode.go
++++ b/encode.go
+@@ -299,7 +299,7 @@ func (enc *Encoder) eArrayOfTables(key Key, rv reflect.Value) {
+ 			continue
+ 		}
+ 		enc.newline()
+-		enc.wf("%s[[%s]]", enc.indentStr(key), key.maybeQuotedAll())
++		enc.wf("%s[[%s]]", enc.indentStr(key), key)
+ 		enc.newline()
+ 		enc.eMapOrStruct(key, trv, false)
+ 	}
+@@ -312,7 +312,7 @@ func (enc *Encoder) eTable(key Key, rv reflect.Value) {
+ 		enc.newline()
+ 	}
+ 	if len(key) > 0 {
+-		enc.wf("%s[%s]", enc.indentStr(key), key.maybeQuotedAll())
++		enc.wf("%s[%s]", enc.indentStr(key), key)
+ 		enc.newline()
+ 	}
+ 	enc.eMapOrStruct(key, rv, false)
+diff --git a/meta.go b/meta.go
+index 49aed3f..868619f 100644
+--- a/meta.go
++++ b/meta.go
+@@ -10,11 +10,12 @@ import (
+ // It allows checking if a key is defined in the TOML data, whether any keys
+ // were undecoded, and the TOML type of a key.
+ type MetaData struct {
++	context Key // Used only during decoding.
++
+ 	mapping map[string]interface{}
+ 	types   map[string]tomlType
+ 	keys    []Key
+ 	decoded map[string]struct{}
+-	context Key // Used only during decoding.
+ }
+ 
+ // IsDefined reports if the key exists in the TOML data.
+@@ -49,8 +50,7 @@ func (md *MetaData) IsDefined(key ...string) bool {
+ // Type will return the empty string if given an empty key or a key that does
+ // not exist. Keys are case sensitive.
+ func (md *MetaData) Type(key ...string) string {
+-	fullkey := strings.Join(key, ".")
+-	if typ, ok := md.types[fullkey]; ok {
++	if typ, ok := md.types[Key(key).String()]; ok {
+ 		return typ.typeString()
+ 	}
+ 	return ""
+@@ -92,12 +92,10 @@ func (md *MetaData) Undecoded() []Key {
+ // values of this type.
+ type Key []string
+ 
+-func (k Key) String() string { return strings.Join(k, ".") }
+-
+-func (k Key) maybeQuotedAll() string {
+-	var ss []string
++func (k Key) String() string {
++	ss := make([]string, len(k))
+ 	for i := range k {
+-		ss = append(ss, k.maybeQuoted(i))
++		ss[i] = k.maybeQuoted(i)
+ 	}
+ 	return strings.Join(ss, ".")
+ }
+@@ -106,16 +104,11 @@ func (k Key) maybeQuoted(i int) string {
+ 	if k[i] == "" {
+ 		return `""`
+ 	}
+-	quote := false
+ 	for _, c := range k[i] {
+ 		if !isBareKeyChar(c) {
+-			quote = true
+-			break
++			return `"` + dblQuotedReplacer.Replace(k[i]) + `"`
+ 		}
+ 	}
+-	if quote {
+-		return `"` + dblQuotedReplacer.Replace(k[i]) + `"`
+-	}
+ 	return k[i]
+ }
+ 
+diff --git a/parse.go b/parse.go
+index f9e13e5..618cbe4 100644
+--- a/parse.go
++++ b/parse.go
+@@ -530,8 +530,8 @@ func (p *parser) addContext(key Key, array bool) {
+ 
+ // set calls setValue and setType.
+ func (p *parser) set(key string, val interface{}, typ tomlType) {
+-	p.setValue(p.currentKey, val)
+-	p.setType(p.currentKey, typ)
++	p.setValue(key, val)
++	p.setType(key, typ)
+ }
+ 
+ // setValue sets the given key to the given value in the current context.
+@@ -590,8 +590,8 @@ func (p *parser) setValue(key string, value interface{}) {
+ 	hash[key] = value
+ }
+ 
+-// setType sets the type of a particular value at a given key.
+-// It should be called immediately AFTER setValue.
++// setType sets the type of a particular value at a given key. It should be
++// called immediately AFTER setValue.
+ //
+ // Note that if `key` is empty, then the type given will be applied to the
+ // current context (which is either a table or an array of tables).
+@@ -601,6 +601,12 @@ func (p *parser) setType(key string, typ tomlType) {
+ 	if len(key) > 0 { // allow type setting for hashes
+ 		keyContext = append(keyContext, key)
+ 	}
++	// Special case to make empty keys ("" = 1) work.
++	// Without it it will set "" rather than `""`.
++	// TODO: why is this needed? And why is this only needed here?
++	if len(keyContext) == 0 {
++		keyContext = Key{""}
++	}
+ 	p.types[keyContext.String()] = typ
+ }
+ 
+@@ -678,7 +684,7 @@ func stripEscapedNewlines(s string) string {
+ }
+ 
+ func (p *parser) replaceEscapes(it item, str string) string {
+-	var replaced []rune
++	replaced := make([]rune, 0, len(str))
+ 	s := []byte(str)
+ 	r := 0
+ 	for r < len(s) {

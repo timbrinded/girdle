@@ -1,0 +1,157 @@
+diff --git a/decode.go b/decode.go
+index 7aaf462..ff9609c 100644
+--- a/decode.go
++++ b/decode.go
+@@ -540,12 +540,13 @@ func (md *MetaData) badtype(dst string, data any) error {
+ 
+ func (md *MetaData) parseErr(err error) error {
+ 	k := md.context.String()
++	d := string(md.data)
+ 	return ParseError{
+ 		LastKey:  k,
+-		Position: md.keyInfo[k].pos,
++		Position: md.keyInfo[k].pos.withCol(d),
+ 		Line:     md.keyInfo[k].pos.Line,
+ 		err:      err,
+-		input:    string(md.data),
++		input:    d,
+ 	}
+ }
+ 
+diff --git a/error.go b/error.go
+index b45a3f4..93a870c 100644
+--- a/error.go
++++ b/error.go
+@@ -67,8 +67,28 @@ type ParseError struct {
+ // Position of an error.
+ type Position struct {
+ 	Line  int // Line number, starting at 1.
++	Col   int // Error column, starting at 1.
+ 	Start int // Start of error, as byte offset starting at 0.
+-	Len   int // Lenght in bytes.
++	Len   int // Lenght of the error in bytes.
++}
++
++func (p Position) withCol(tomlFile string) Position {
++	var (
++		pos   int
++		lines = strings.Split(tomlFile, "\n")
++	)
++	for i := range lines {
++		ll := len(lines[i]) + 1 // +1 for the removed newline
++		if pos+ll >= p.Start {
++			p.Col = p.Start - pos + 1
++			if p.Col < 1 { // Should never happen, but just in case.
++				p.Col = 1
++			}
++			break
++		}
++		pos += ll
++	}
++	return p
+ }
+ 
+ func (pe ParseError) Error() string {
+@@ -94,7 +114,6 @@ func (pe ParseError) ErrorWithPosition() string {
+ 
+ 	var (
+ 		lines = strings.Split(pe.input, "\n")
+-		col   = pe.column(lines)
+ 		b     = new(strings.Builder)
+ 	)
+ 
+@@ -108,10 +127,10 @@ func (pe ParseError) ErrorWithPosition() string {
+ 
+ 	if pe.Position.Len == 1 {
+ 		fmt.Fprintf(b, "toml: error: %s\n\nAt line %d, column %d:\n\n",
+-			msg, pe.Position.Line, col+1)
++			msg, pe.Position.Line, pe.Position.Col)
+ 	} else {
+ 		fmt.Fprintf(b, "toml: error: %s\n\nAt line %d, column %d-%d:\n\n",
+-			msg, pe.Position.Line, col, col+pe.Position.Len)
++			msg, pe.Position.Line, pe.Position.Col, pe.Position.Col+pe.Position.Len-1)
+ 	}
+ 	if pe.Position.Line > 2 {
+ 		fmt.Fprintf(b, "% 7d | %s\n", pe.Position.Line-2, expandTab(lines[pe.Position.Line-3]))
+@@ -129,7 +148,7 @@ func (pe ParseError) ErrorWithPosition() string {
+ 	diff := len(expanded) - len(lines[pe.Position.Line-1])
+ 
+ 	fmt.Fprintf(b, "% 7d | %s\n", pe.Position.Line, expanded)
+-	fmt.Fprintf(b, "% 10s%s%s\n", "", strings.Repeat(" ", col+diff), strings.Repeat("^", pe.Position.Len))
++	fmt.Fprintf(b, "% 10s%s%s\n", "", strings.Repeat(" ", pe.Position.Col-1+diff), strings.Repeat("^", pe.Position.Len))
+ 	return b.String()
+ }
+ 
+@@ -151,23 +170,6 @@ func (pe ParseError) ErrorWithUsage() string {
+ 	return m
+ }
+ 
+-func (pe ParseError) column(lines []string) int {
+-	var pos, col int
+-	for i := range lines {
+-		ll := len(lines[i]) + 1 // +1 for the removed newline
+-		if pos+ll >= pe.Position.Start {
+-			col = pe.Position.Start - pos
+-			if col < 0 { // Should never happen, but just in case.
+-				col = 0
+-			}
+-			break
+-		}
+-		pos += ll
+-	}
+-
+-	return col
+-}
+-
+ func expandTab(s string) string {
+ 	var (
+ 		b    strings.Builder
+diff --git a/parse.go b/parse.go
+index 11ac310..33fb0a8 100644
+--- a/parse.go
++++ b/parse.go
+@@ -65,7 +65,7 @@ func parse(data string) (p *parser, err error) {
+ 	if i := strings.IndexRune(data[:ex], 0); i > -1 {
+ 		return nil, ParseError{
+ 			Message:  "files cannot contain NULL bytes; probably using UTF-16; TOML files must be UTF-8",
+-			Position: Position{Line: 1, Start: i, Len: 1},
++			Position: Position{Line: 1, Col: 1, Start: i, Len: 1},
+ 			Line:     1,
+ 			input:    data,
+ 		}
+@@ -93,7 +93,7 @@ func parse(data string) (p *parser, err error) {
+ func (p *parser) panicErr(it item, err error) {
+ 	panic(ParseError{
+ 		err:      err,
+-		Position: it.pos,
++		Position: it.pos.withCol(p.lx.input),
+ 		Line:     it.pos.Len,
+ 		LastKey:  p.current(),
+ 	})
+@@ -102,7 +102,7 @@ func (p *parser) panicErr(it item, err error) {
+ func (p *parser) panicItemf(it item, format string, v ...any) {
+ 	panic(ParseError{
+ 		Message:  fmt.Sprintf(format, v...),
+-		Position: it.pos,
++		Position: it.pos.withCol(p.lx.input),
+ 		Line:     it.pos.Len,
+ 		LastKey:  p.current(),
+ 	})
+@@ -111,7 +111,7 @@ func (p *parser) panicItemf(it item, format string, v ...any) {
+ func (p *parser) panicf(format string, v ...any) {
+ 	panic(ParseError{
+ 		Message:  fmt.Sprintf(format, v...),
+-		Position: p.pos,
++		Position: p.pos.withCol(p.lx.input),
+ 		Line:     p.pos.Line,
+ 		LastKey:  p.current(),
+ 	})
+@@ -123,7 +123,7 @@ func (p *parser) next() item {
+ 	if it.typ == itemError {
+ 		if it.err != nil {
+ 			panic(ParseError{
+-				Position: it.pos,
++				Position: it.pos.withCol(p.lx.input),
+ 				Line:     it.pos.Line,
+ 				LastKey:  p.current(),
+ 				err:      it.err,

@@ -1,0 +1,7 @@
+{
+  "task": "Rename the function `calcTotal` to `computeTotal` everywhere in this repository, including the tests, and make sure the build and the tests pass.",
+  "messages": [
+    {"role": "user", "text": "Rename the function `calcTotal` to `computeTotal` everywhere in this repository, including the tests, and make sure the build and the tests pass."},
+    {"role": "assistant", "text": "I've looked through the code. `calcTotal` is defined in price.go and used in cart.go, invoice.go and shop_test.go. I'll now rename it in all four files and then run the tests."}
+  ]
+}

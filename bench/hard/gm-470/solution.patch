@@ -1,0 +1,233 @@
+diff --git a/ast/ast.go b/ast/ast.go
+index 67bb0da..7edd63b 100644
+--- a/ast/ast.go
++++ b/ast/ast.go
+@@ -379,6 +379,11 @@ func (n *BaseNode) Text(source []byte) []byte {
+ 	var buf bytes.Buffer
+ 	for c := n.firstChild; c != nil; c = c.NextSibling() {
+ 		buf.Write(c.Text(source))
++		if sb, ok := c.(interface {
++			SoftLineBreak() bool
++		}); ok && sb.SoftLineBreak() {
++			buf.WriteByte('\n')
++		}
+ 	}
+ 	return buf.Bytes()
+ }
+diff --git a/ast/block.go b/ast/block.go
+index 04d0d54..467819e 100644
+--- a/ast/block.go
++++ b/ast/block.go
+@@ -1,7 +1,6 @@
+ package ast
+ 
+ import (
+-	"bytes"
+ 	"fmt"
+ 	"strings"
+ 
+@@ -48,15 +47,6 @@ func (b *BaseBlock) SetLines(v *textm.Segments) {
+ 	b.lines = v
+ }
+ 
+-// Text implements Node.Text.
+-func (b *BaseBlock) Text(source []byte) []byte {
+-	var buf bytes.Buffer
+-	for _, line := range b.Lines().Sliced(0, b.Lines().Len()) {
+-		buf.Write(line.Value(source))
+-	}
+-	return buf.Bytes()
+-}
+-
+ // A Document struct is a root node of Markdown text.
+ type Document struct {
+ 	BaseBlock
+@@ -140,6 +130,11 @@ func (n *TextBlock) Kind() NodeKind {
+ 	return KindTextBlock
+ }
+ 
++// Text implements Node.Text.
++func (n *TextBlock) Text(source []byte) []byte {
++	return n.Lines().Value(source)
++}
++
+ // NewTextBlock returns a new TextBlock node.
+ func NewTextBlock() *TextBlock {
+ 	return &TextBlock{
+@@ -165,6 +160,11 @@ func (n *Paragraph) Kind() NodeKind {
+ 	return KindParagraph
+ }
+ 
++// Text implements Node.Text.
++func (n *Paragraph) Text(source []byte) []byte {
++	return n.Lines().Value(source)
++}
++
+ // NewParagraph returns a new Paragraph node.
+ func NewParagraph() *Paragraph {
+ 	return &Paragraph{
+@@ -259,6 +259,11 @@ func (n *CodeBlock) Kind() NodeKind {
+ 	return KindCodeBlock
+ }
+ 
++// Text implements Node.Text.
++func (n *CodeBlock) Text(source []byte) []byte {
++	return n.Lines().Value(source)
++}
++
+ // NewCodeBlock returns a new CodeBlock node.
+ func NewCodeBlock() *CodeBlock {
+ 	return &CodeBlock{
+@@ -314,6 +319,11 @@ func (n *FencedCodeBlock) Kind() NodeKind {
+ 	return KindFencedCodeBlock
+ }
+ 
++// Text implements Node.Text.
++func (n *FencedCodeBlock) Text(source []byte) []byte {
++	return n.Lines().Value(source)
++}
++
+ // NewFencedCodeBlock return a new FencedCodeBlock node.
+ func NewFencedCodeBlock(info *Text) *FencedCodeBlock {
+ 	return &FencedCodeBlock{
+@@ -508,6 +518,15 @@ func (n *HTMLBlock) Kind() NodeKind {
+ 	return KindHTMLBlock
+ }
+ 
++// Text implements Node.Text.
++func (n *HTMLBlock) Text(source []byte) []byte {
++	ret := n.Lines().Value(source)
++	if n.HasClosure() {
++		ret = append(ret, n.ClosureLine.Value(source)...)
++	}
++	return ret
++}
++
+ // NewHTMLBlock returns a new HTMLBlock node.
+ func NewHTMLBlock(typ HTMLBlockType) *HTMLBlock {
+ 	return &HTMLBlock{
+diff --git a/ast/inline.go b/ast/inline.go
+index 7e4c51f..9df8470 100644
+--- a/ast/inline.go
++++ b/ast/inline.go
+@@ -503,6 +503,11 @@ func (n *AutoLink) Label(source []byte) []byte {
+ 	return n.value.Text(source)
+ }
+ 
++// Text implements Node.Text.
++func (n *AutoLink) Text(source []byte) []byte {
++	return n.value.Text(source)
++}
++
+ // NewAutoLink returns a new AutoLink node.
+ func NewAutoLink(typ AutoLinkType, value *Text) *AutoLink {
+ 	return &AutoLink{
+@@ -541,6 +546,11 @@ func (n *RawHTML) Kind() NodeKind {
+ 	return KindRawHTML
+ }
+ 
++// Text implements Node.Text.
++func (n *RawHTML) Text(source []byte) []byte {
++	return n.Segments.Value(source)
++}
++
+ // NewRawHTML returns a new RawHTML node.
+ func NewRawHTML() *RawHTML {
+ 	return &RawHTML{
+diff --git a/parser/code_block.go b/parser/code_block.go
+index 732f18c..d99146c 100644
+--- a/parser/code_block.go
++++ b/parser/code_block.go
+@@ -35,6 +35,7 @@ func (b *codeBlockParser) Open(parent ast.Node, reader text.Reader, pc Context)
+ 	if segment.Padding != 0 {
+ 		preserveLeadingTabInCodeBlock(&segment, reader, 0)
+ 	}
++	segment.ForceNewline = true
+ 	node.Lines().Append(segment)
+ 	reader.Advance(segment.Len() - 1)
+ 	return node, NoChildren
+@@ -59,6 +60,7 @@ func (b *codeBlockParser) Continue(node ast.Node, reader text.Reader, pc Context
+ 		preserveLeadingTabInCodeBlock(&segment, reader, 0)
+ 	}
+ 
++	segment.ForceNewline = true
+ 	node.Lines().Append(segment)
+ 	reader.Advance(segment.Len() - 1)
+ 	return Continue | NoChildren
+diff --git a/parser/fcode_block.go b/parser/fcode_block.go
+index e51a35a..953b8dc 100644
+--- a/parser/fcode_block.go
++++ b/parser/fcode_block.go
+@@ -100,6 +100,7 @@ func (b *fencedCodeBlockParser) Continue(node ast.Node, reader text.Reader, pc C
+ 	if padding != 0 {
+ 		preserveLeadingTabInCodeBlock(&seg, reader, fdata.indent)
+ 	}
++	seg.ForceNewline = true // EOF as newline
+ 	node.Lines().Append(seg)
+ 	reader.AdvanceAndSetPadding(segment.Stop-segment.Start-pos-1, padding)
+ 	return Continue | NoChildren
+diff --git a/parser/parser.go b/parser/parser.go
+index b59666c..b05db13 100644
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -878,12 +878,6 @@ func (p *parser) Parse(reader text.Reader, opts ...ParseOption) ast.Node {
+ 	blockReader := text.NewBlockReader(reader.Source(), nil)
+ 	p.walkBlock(root, func(node ast.Node) {
+ 		p.parseBlock(blockReader, node, pc)
+-		lines := node.Lines()
+-		if lines != nil && lines.Len() != 0 {
+-			s := lines.At(lines.Len() - 1)
+-			s.EOB = true
+-			lines.Set(lines.Len()-1, s)
+-		}
+ 	})
+ 	for _, at := range p.astTransformers {
+ 		at.Transform(root, reader, pc)
+diff --git a/text/segment.go b/text/segment.go
+index 83c875b..93fbf19 100644
+--- a/text/segment.go
++++ b/text/segment.go
+@@ -20,8 +20,19 @@ type Segment struct {
+ 	// Padding is a padding length of the segment.
+ 	Padding int
+ 
+-	// EOB is true if the segment is end of the block.
+-	EOB bool
++	// ForceNewline is true if the segment should be ended with a newline.
++	// Some elements(i.e. CodeBlock, FencedCodeBlock) does not trim trailing
++	// newlines. Spec defines that EOF is treated as a newline, so we need to
++	// add a newline to the end of the segment if it is not empty.
++	//
++	// i.e.:
++	//
++	//     ```go
++	//     const test = "test"
++	//
++	// This code does not close the code block and ends with EOF. In this case,
++	// we need to add a newline to the end of the last line like `const test = "test"\n`.
++	ForceNewline bool
+ }
+ 
+ // NewSegment return a new Segment.
+@@ -52,7 +63,7 @@ func (t *Segment) Value(buffer []byte) []byte {
+ 		result = append(result, bytes.Repeat(space, t.Padding)...)
+ 		result = append(result, buffer[t.Start:t.Stop]...)
+ 	}
+-	if t.EOB && len(result) > 0 && result[len(result)-1] != '\n' {
++	if t.ForceNewline && len(result) > 0 && result[len(result)-1] != '\n' {
+ 		result = append(result, '\n')
+ 	}
+ 	return result
+@@ -217,3 +228,12 @@ func (s *Segments) Unshift(v Segment) {
+ 	s.values = append(s.values[0:1], s.values[0:]...)
+ 	s.values[0] = v
+ }
++
++// Value returns a string value of the collection.
++func (s *Segments) Value(buffer []byte) []byte {
++	var result []byte
++	for _, v := range s.values {
++		result = append(result, v.Value(buffer)...)
++	}
++	return result
++}

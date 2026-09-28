@@ -1,0 +1,1 @@
+Add a `--json` flag to the `list` command that prints the todos as a JSON array of objects with the fields `id`, `title` and `done`. It must work together with the existing `--done` flag. Keep the plain output exactly as it is when `--json` is not given, and add a test for the new flag.

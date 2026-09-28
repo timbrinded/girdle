@@ -16,3 +16,12 @@
 # env files that may hold keys
 .env
 .env.*
+
+# benchmark runs and Pi's runtime files
+/bench/results/
+/bench/pi-agent/*
+!/bench/pi-agent/settings.json
+
+# upstream repositories cloned by bench/prepare.sh
+/bench/.cache/
+/bench/.warm/

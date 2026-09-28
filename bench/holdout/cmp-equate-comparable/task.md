@@ -1,0 +1,1 @@
+Add `cmpopts.EquateComparable(typs ...any) cmp.Option`. It makes `cmp` compare values of the given types with `==`, even when the types have unexported fields, so that `cmp.Equal(x, y, cmpopts.EquateComparable(netip.Addr{}))` works on structs holding `netip.Addr` values. It must panic if one of the types isn't comparable. `go test ./...` must pass.

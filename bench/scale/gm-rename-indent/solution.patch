@@ -1,0 +1,159 @@
+diff --git a/extension/definition_list.go b/extension/definition_list.go
+index 9185f0d..e818d3a 100644
+--- a/extension/definition_list.go
++++ b/extension/definition_list.go
+@@ -38,7 +38,7 @@ func (b *definitionListParser) Open(parent gast.Node, reader text.Reader, pc par
+ 
+ 	last := parent.LastChild()
+ 	// need 1 or more spaces after ':'
+-	w, _ := util.IndentWidth(line[pos+1:], pos+1)
++	w, _ := util.MeasureIndent(line[pos+1:], pos+1)
+ 	if w < 1 {
+ 		return nil, parser.NoChildren
+ 	}
+@@ -78,7 +78,7 @@ func (b *definitionListParser) Continue(node gast.Node, reader text.Reader, _ pa
+ 		return parser.Continue | parser.HasChildren
+ 	}
+ 	list, _ := node.(*ast.DefinitionList)
+-	w, _ := util.IndentWidth(line, reader.LineOffset())
++	w, _ := util.MeasureIndent(line, reader.LineOffset())
+ 	if w < list.Offset() {
+ 		return parser.Close
+ 	}
+diff --git a/extension/table.go b/extension/table.go
+index 1c9da56..c7e115b 100644
+--- a/extension/table.go
++++ b/extension/table.go
+@@ -67,7 +67,7 @@ func WithTableCellAlignMethod(a TableCellAlignMethod) TableHTMLRendererOption {
+ }
+ 
+ func isTableDelim(bs []byte) bool {
+-	if w, _ := util.IndentWidth(bs, 0); w > 3 {
++	if w, _ := util.MeasureIndent(bs, 0); w > 3 {
+ 		return false
+ 	}
+ 	allSep := true
+diff --git a/parser/blockquote.go b/parser/blockquote.go
+index 8ca9029..21039d5 100644
+--- a/parser/blockquote.go
++++ b/parser/blockquote.go
+@@ -19,7 +19,7 @@ func NewBlockquoteParser() BlockParser {
+ 
+ func (b *blockquoteParser) process(reader text.Reader) bool {
+ 	line, _ := reader.PeekLine()
+-	w, pos := util.IndentWidth(line, reader.LineOffset())
++	w, pos := util.MeasureIndent(line, reader.LineOffset())
+ 	if w > 3 || pos >= len(line) || line[pos] != '>' {
+ 		return false
+ 	}
+diff --git a/parser/fcode_block.go b/parser/fcode_block.go
+index 5c1b839..3c064bf 100644
+--- a/parser/fcode_block.go
++++ b/parser/fcode_block.go
+@@ -73,7 +73,7 @@ func (b *fencedCodeBlockParser) Continue(node ast.Node, reader text.Reader, pc C
+ 	line, segment := reader.PeekLine()
+ 	fdata := pc.Get(fencedCodeBlockInfoKey).(*fenceData)
+ 
+-	w, pos := util.IndentWidth(line, reader.LineOffset())
++	w, pos := util.MeasureIndent(line, reader.LineOffset())
+ 	if w < 4 {
+ 		i := pos
+ 		for i < len(line) && line[i] == fdata.char {
+diff --git a/parser/link_ref.go b/parser/link_ref.go
+index d73685b..828b3f8 100644
+--- a/parser/link_ref.go
++++ b/parser/link_ref.go
+@@ -60,7 +60,7 @@ func parseLinkReferenceDefinition(block text.Reader, pc Context) (ast.BlockNode,
+ 		return nil, -1, -1
+ 	}
+ 	startLine, _ := block.Position()
+-	width, pos := util.IndentWidth(line, 0)
++	width, pos := util.MeasureIndent(line, 0)
+ 	if width > 3 {
+ 		return nil, -1, -1
+ 	}
+diff --git a/parser/list.go b/parser/list.go
+index be4008f..780107b 100644
+--- a/parser/list.go
++++ b/parser/list.go
+@@ -70,7 +70,7 @@ func parseListItem(line []byte) ([6]int, listItemType) {
+ 		return ret, notList
+ 	}
+ 	if i < l && line[i] != '\n' {
+-		w, _ := util.IndentWidth(line[i:], 0)
++		w, _ := util.MeasureIndent(line[i:], 0)
+ 		if w == 0 {
+ 			return ret, notList
+ 		}
+@@ -93,7 +93,7 @@ func calcListOffset(line []byte, match [6]int) int {
+ 	if match[4] < 0 || util.IsBlank(line[match[4]:]) { // list item starts with a blank line
+ 		offset = 1
+ 	} else {
+-		offset, _ = util.IndentWidth(line[match[4]:], match[4])
++		offset, _ = util.MeasureIndent(line[match[4]:], match[4])
+ 		if offset > 4 { // offseted codeblock
+ 			offset = 1
+ 		}
+@@ -186,7 +186,7 @@ func (b *listParser) Continue(node ast.Node, reader text.Reader, pc Context) Sta
+ 	//
+ 	offset := lastOffset(node)
+ 	lastIsEmpty := node.LastChild().ChildCount() == 0
+-	indent, _ := util.IndentWidth(line, reader.LineOffset())
++	indent, _ := util.MeasureIndent(line, reader.LineOffset())
+ 
+ 	if indent < offset || lastIsEmpty {
+ 		if indent < 4 {
+diff --git a/parser/list_item.go b/parser/list_item.go
+index 2617e86..701393a 100644
+--- a/parser/list_item.go
++++ b/parser/list_item.go
+@@ -60,7 +60,7 @@ func (b *listItemParser) Continue(node ast.Node, reader text.Reader, pc Context)
+ 
+ 	offset := lastOffset(node.Parent())
+ 	isEmpty := node.ChildCount() == 0 && pc.Get(emptyListItemWithBlankLinesKey) != nil
+-	indent, _ := util.IndentWidth(line, reader.LineOffset())
++	indent, _ := util.MeasureIndent(line, reader.LineOffset())
+ 	if (isEmpty || indent < offset) && indent < 4 {
+ 		_, typ := parseListItem(line)
+ 		// new list item found
+diff --git a/parser/parser.go b/parser/parser.go
+index 2564fce..91cab79 100644
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -1029,7 +1029,7 @@ func (p *parser) openBlocks(parent ast.Node, blankLine bool, reader text.Reader,
+ retry:
+ 	var bps []BlockParser
+ 	line, seg := reader.PeekLine()
+-	w, pos := util.IndentWidth(line, reader.LineOffset())
++	w, pos := util.MeasureIndent(line, reader.LineOffset())
+ 	if len(line) == 0 {
+ 		pc.SetBlockOffset(-1)
+ 		pc.SetBlockIndent(-1)
+diff --git a/parser/thematic_break.go b/parser/thematic_break.go
+index eaaf364..e5006d9 100644
+--- a/parser/thematic_break.go
++++ b/parser/thematic_break.go
+@@ -18,7 +18,7 @@ func NewThematicBreakParser() BlockParser {
+ }
+ 
+ func isThematicBreak(line []byte, offset int) bool {
+-	w, pos := util.IndentWidth(line, offset)
++	w, pos := util.MeasureIndent(line, offset)
+ 	if w > 3 {
+ 		return false
+ 	}
+diff --git a/util/util.go b/util/util.go
+index 7593a9d..ecd4d0b 100644
+--- a/util/util.go
++++ b/util/util.go
+@@ -182,8 +182,8 @@ func IndentPositionPadding(bs []byte, currentPos, paddingv, width int) (pos, pad
+ 	return -1, -1
+ }
+ 
+-// IndentWidth calculate an indent width for the given line.
+-func IndentWidth(bs []byte, currentPos int) (width, pos int) {
++// MeasureIndent calculate an indent width for the given line.
++func MeasureIndent(bs []byte, currentPos int) (width, pos int) {
+ 	for i := range len(bs) {
+ 		switch bs[i] {
+ 		case ' ':

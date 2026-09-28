@@ -1,0 +1,9 @@
+{
+  "defaultProvider": "openrouter",
+  "defaultModel": "meta/muse-spark-1.3-contributor",
+  "defaultThinkingLevel": "medium",
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "always",
+  "retry": { "enabled": true }
+}

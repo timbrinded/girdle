@@ -1,0 +1,80 @@
+package checkpoint
+
+import (
+	"context"
+
+	"github.com/timbrinded/girdle/internal/jev"
+)
+
+// Effort is the reasoning effort the LLM is asked to use.
+type Effort string
+
+const (
+	EffortLow    Effort = "low"
+	EffortMedium Effort = "medium"
+	EffortHigh   Effort = "high"
+)
+
+// RouteState is what Jev sees when a request arrives.
+type RouteState struct {
+	Request string `json:"request"`
+}
+
+// RouteQuestions score how much reasoning a request needs.
+var RouteQuestions = map[string]jev.Question{
+	"complexity": jev.Score(
+		"How much reasoning will a coding agent need to complete `request`?",
+		"Trivial: one obvious step, like a lookup, a rename or a single command",
+		"Moderate: a few coordinated edits, or an investigation in one area",
+		"Hard: multi-file design, subtle debugging, precise edge cases or many separate requirements",
+	),
+	"tests": jev.Noul("Does `request` ask the agent to write new tests or change existing ones?"),
+}
+
+// RoutePolicy maps the complexity score (0 to 2) to a reasoning effort.
+type RoutePolicy struct {
+	// LowBelow and HighFrom are cut points on the expected score.
+	LowBelow float64
+	HighFrom float64
+}
+
+// DefaultRoutePolicy routes most requests to low effort. In the 2026-09-26
+// benchmark, low effort with the turn-end checkpoints passed every
+// spec-heavy task that medium did, in about half the time. The low cut moved
+// from 1.7 to 1.85 the same day: js-csv, scored 1.76 to 1.8, passed every run
+// at low in both flows, and in the fast flow low took 37 s against 48 s at
+// medium. Only requests Jev scores near "hard" get more effort. Retune from
+// the decision log.
+var DefaultRoutePolicy = RoutePolicy{LowBelow: 1.85, HighFrom: 1.9}
+
+// RouteDecision records the routing checkpoint.
+type RouteDecision struct {
+	Checkpoint string  `json:"checkpoint"`
+	Effort     Effort  `json:"effort"`
+	Score      float64 `json:"score"`
+	// Tests is Jev's noul for "the request asks for tests".
+	Tests float64    `json:"tests,omitzero"`
+	State RouteState `json:"state"`
+	Call
+}
+
+// Route picks the reasoning effort for a request. If Jev is unreachable it
+// falls back to medium.
+func Route(ctx context.Context, c *jev.Client, s RouteState, p RoutePolicy) RouteDecision {
+	d := RouteDecision{Checkpoint: "route", State: s, Effort: EffortMedium}
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, RouteQuestions); !ok {
+		return d
+	}
+	d.Score = d.Answers["complexity"].Score
+	d.Tests = d.Answers["tests"].Noul
+	switch {
+	case d.Score < p.LowBelow:
+		d.Effort = EffortLow
+	case d.Score >= p.HighFrom:
+		d.Effort = EffortHigh
+	default:
+		d.Effort = EffortMedium
+	}
+	return d
+}

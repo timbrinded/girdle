@@ -1,0 +1,51 @@
+diff --git a/_test/extra.txt b/_test/extra.txt
+index cea89b5..ceaf432 100644
+--- a/_test/extra.txt
++++ b/_test/extra.txt
+@@ -752,3 +752,22 @@ a <!-- b -->
+ <pre>
+ </pre>
+ //= = = = = = = = = = = = = = = = = = = = = = = =//
++
++59: Raw HTML tag with one new line
++//- - - - - - - - -//
++<img src=./.assets/logo.svg
++/>
++//- - - - - - - - -//
++<p><img src=./.assets/logo.svg
++/></p>
++//= = = = = = = = = = = = = = = = = = = = = = = =//
++
++60: Raw HTML tag with multiple new lines
++//- - - - - - - - -//
++<img src=./.assets/logo.svg
++
++/>
++//- - - - - - - - -//
++<p>&lt;img src=./.assets/logo.svg</p>
++<p>/&gt;</p>
++//= = = = = = = = = = = = = = = = = = = = = = = =//
+diff --git a/extra_test.go b/extra_test.go
+index 0e61c67..a2d3d62 100644
+--- a/extra_test.go
++++ b/extra_test.go
+@@ -203,3 +203,19 @@ func TestManyCommentPerformance(t *testing.T) {
+ 		t.Error("Parsing processing instructions took too long")
+ 	}
+ }
++
++func TestDangerousURLStringCase(t *testing.T) {
++	markdown := New()
++
++	source := []byte(`[Basic](javascript:alert('Basic'))
++[CaseInsensitive](JaVaScRiPt:alert('CaseInsensitive'))
++`)
++	expected := []byte(`<p><a href="">Basic</a>
++<a href="">CaseInsensitive</a></p>
++`)
++	var b bytes.Buffer
++	_ = markdown.Convert(source, &b)
++	if !bytes.Equal(expected, b.Bytes()) {
++		t.Error("Dangerous URL should ignore cases:\n" + string(testutil.DiffPretty(expected, b.Bytes())))
++	}
++}

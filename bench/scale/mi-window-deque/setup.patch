@@ -1,0 +1,13 @@
+diff --git a/more_itertools/recipes.py b/more_itertools/recipes.py
+index d39d8cf..a427f40 100644
+--- a/more_itertools/recipes.py
++++ b/more_itertools/recipes.py
+@@ -798,7 +798,7 @@ def _sliding_window_islice(iterable, n):
+ def _sliding_window_deque(iterable, n):
+     # Normal path for other values of n.
+     iterator = iter(iterable)
+-    window = deque(islice(iterator, n - 1), maxlen=n)
++    window = deque(islice(iterator, n), maxlen=n)
+     for x in iterator:
+         window.append(x)
+         yield tuple(window)

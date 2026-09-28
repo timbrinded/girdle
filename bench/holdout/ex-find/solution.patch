@@ -1,0 +1,291 @@
+diff --git a/builtin/builtin.go b/builtin/builtin.go
+index 82922e9..fe1f36a 100644
+--- a/builtin/builtin.go
++++ b/builtin/builtin.go
+@@ -60,6 +60,16 @@ var Builtins = []*Function{
+ 		Predicate: true,
+ 		Types:     types(new(func([]interface{}, func(interface{}) bool) []interface{})),
+ 	},
++	{
++		Name:      "find",
++		Predicate: true,
++		Types:     types(new(func([]interface{}, func(interface{}) bool) interface{})),
++	},
++	{
++		Name:      "findIndex",
++		Predicate: true,
++		Types:     types(new(func([]interface{}, func(interface{}) bool) int)),
++	},
+ 	{
+ 		Name:      "map",
+ 		Predicate: true,
+diff --git a/checker/checker.go b/checker/checker.go
+index 4a001f4..5cf2538 100644
+--- a/checker/checker.go
++++ b/checker/checker.go
+@@ -672,6 +672,52 @@ func (v *visitor) BuiltinNode(node *ast.BuiltinNode) (reflect.Type, info) {
+ 			return integerType, info{}
+ 		}
+ 		return v.error(node.Arguments[1], "closure should has one input and one output param")
++
++	case "find":
++		collection, _ := v.visit(node.Arguments[0])
++		if !isArray(collection) && !isAny(collection) {
++			return v.error(node.Arguments[0], "builtin %v takes only array (got %v)", node.Name, collection)
++		}
++
++		v.collections = append(v.collections, collection)
++		closure, _ := v.visit(node.Arguments[1])
++		v.collections = v.collections[:len(v.collections)-1]
++
++		if isFunc(closure) &&
++			closure.NumOut() == 1 &&
++			closure.NumIn() == 1 && isAny(closure.In(0)) {
++
++			if !isBool(closure.Out(0)) && !isAny(closure.Out(0)) {
++				return v.error(node.Arguments[1], "closure should return boolean (got %v)", closure.Out(0).String())
++			}
++			if isAny(collection) {
++				return anyType, info{}
++			}
++			return collection.Elem(), info{}
++		}
++		return v.error(node.Arguments[1], "closure should has one input and one output param")
++
++	case "findIndex":
++		collection, _ := v.visit(node.Arguments[0])
++		if !isArray(collection) && !isAny(collection) {
++			return v.error(node.Arguments[0], "builtin %v takes only array (got %v)", node.Name, collection)
++		}
++
++		v.collections = append(v.collections, collection)
++		closure, _ := v.visit(node.Arguments[1])
++		v.collections = v.collections[:len(v.collections)-1]
++
++		if isFunc(closure) &&
++			closure.NumOut() == 1 &&
++			closure.NumIn() == 1 && isAny(closure.In(0)) {
++
++			if !isBool(closure.Out(0)) && !isAny(closure.Out(0)) {
++				return v.error(node.Arguments[1], "closure should return boolean (got %v)", closure.Out(0).String())
++			}
++			return integerType, info{}
++		}
++		return v.error(node.Arguments[1], "closure should has one input and one output param")
++
+ 	}
+ 
+ 	if id, ok := builtin.Index[node.Name]; ok {
+diff --git a/compiler/compiler.go b/compiler/compiler.go
+index b40e127..c992071 100644
+--- a/compiler/compiler.go
++++ b/compiler/compiler.go
+@@ -719,6 +719,42 @@ func (c *compiler) BuiltinNode(node *ast.BuiltinNode) {
+ 		c.emit(OpGetCount)
+ 		c.emit(OpEnd)
+ 		return
++
++	case "find":
++		c.compile(node.Arguments[0])
++		c.emit(OpBegin)
++		var loopBreak int
++		c.emitLoop(func() {
++			c.compile(node.Arguments[1])
++			noop := c.emit(OpJumpIfFalse, placeholder)
++			c.emit(OpPop)
++			c.emit(OpPointer)
++			loopBreak = c.emit(OpJump, placeholder)
++			c.patchJump(noop)
++			c.emit(OpPop)
++		})
++		c.emit(OpNil)
++		c.patchJump(loopBreak)
++		c.emit(OpEnd)
++		return
++
++	case "findIndex":
++		c.compile(node.Arguments[0])
++		c.emit(OpBegin)
++		var loopBreak int
++		c.emitLoop(func() {
++			c.compile(node.Arguments[1])
++			noop := c.emit(OpJumpIfFalse, placeholder)
++			c.emit(OpPop)
++			c.emit(OpGetIndex)
++			loopBreak = c.emit(OpJump, placeholder)
++			c.patchJump(noop)
++			c.emit(OpPop)
++		})
++		c.emit(OpPushInt, -1)
++		c.patchJump(loopBreak)
++		c.emit(OpEnd)
++		return
+ 	}
+ 
+ 	if id, ok := builtin.Index[node.Name]; ok {
+@@ -755,7 +791,7 @@ func (c *compiler) emitLoop(body func()) {
+ 
+ 	body()
+ 
+-	c.emit(OpIncrementIt)
++	c.emit(OpIncrementIndex)
+ 	c.emit(OpJumpBackward, c.calcBackwardJump(begin))
+ 	c.patchJump(end)
+ }
+diff --git a/debug/debugger.go b/debug/debugger.go
+index 7de8517..a002e05 100644
+--- a/debug/debugger.go
++++ b/debug/debugger.go
+@@ -126,7 +126,7 @@ func StartDebugger(program *Program, env interface{}) {
+ 					value int
+ 				}
+ 				var keys []pair
+-				keys = append(keys, pair{"It", s.It})
++				keys = append(keys, pair{"Index", s.Index})
+ 				keys = append(keys, pair{"Len", s.Len})
+ 				keys = append(keys, pair{"Count", s.Count})
+ 				row := 0
+diff --git a/parser/parser.go b/parser/parser.go
+index f2afc2e..cef232d 100644
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -17,13 +17,15 @@ import (
+ var predicates = map[string]struct {
+ 	arity int
+ }{
+-	"all":    {2},
+-	"none":   {2},
+-	"any":    {2},
+-	"one":    {2},
+-	"filter": {2},
+-	"map":    {2},
+-	"count":  {2},
++	"all":       {2},
++	"none":      {2},
++	"any":       {2},
++	"one":       {2},
++	"filter":    {2},
++	"map":       {2},
++	"count":     {2},
++	"find":      {2},
++	"findIndex": {2},
+ }
+ 
+ type parser struct {
+diff --git a/repl/repl.go b/repl/repl.go
+index c249af0..d50b3b1 100644
+--- a/repl/repl.go
++++ b/repl/repl.go
+@@ -25,9 +25,14 @@ var keywords = []string{
+ }
+ 
+ func main() {
++	home, err := os.UserHomeDir()
++	if err != nil {
++		panic(err)
++	}
+ 	rl, err := readline.NewEx(&readline.Config{
+ 		Prompt:       "❯ ",
+ 		AutoComplete: completer{append(builtin.Names, keywords...)},
++		HistoryFile:  home + "/.expr_history",
+ 	})
+ 	if err != nil {
+ 		panic(err)
+diff --git a/vm/opcodes.go b/vm/opcodes.go
+index 079d1c7..75e7081 100644
+--- a/vm/opcodes.go
++++ b/vm/opcodes.go
+@@ -65,8 +65,9 @@ const (
+ 	OpLen
+ 	OpCast
+ 	OpDeref
+-	OpIncrementIt
++	OpIncrementIndex
+ 	OpIncrementCount
++	OpGetIndex
+ 	OpGetCount
+ 	OpGetLen
+ 	OpPointer
+diff --git a/vm/program.go b/vm/program.go
+index 1481dbf..b99aa1b 100644
+--- a/vm/program.go
++++ b/vm/program.go
+@@ -268,12 +268,15 @@ func (program *Program) Opcodes(w io.Writer) {
+ 		case OpDeref:
+ 			code("OpDeref")
+ 
+-		case OpIncrementIt:
+-			code("OpIncrementIt")
++		case OpIncrementIndex:
++			code("OpIncrementIndex")
+ 
+ 		case OpIncrementCount:
+ 			code("OpIncrementCount")
+ 
++		case OpGetIndex:
++			code("OpGetIndex")
++
+ 		case OpGetCount:
+ 			code("OpGetCount")
+ 
+diff --git a/vm/vm.go b/vm/vm.go
+index 49bee40..5eb4bba 100644
+--- a/vm/vm.go
++++ b/vm/vm.go
+@@ -40,7 +40,7 @@ type VM struct {
+ 
+ type Scope struct {
+ 	Array reflect.Value
+-	It    int
++	Index int
+ 	Len   int
+ 	Count int
+ }
+@@ -99,6 +99,9 @@ func (vm *VM) Run(program *Program, env interface{}) (_ interface{}, err error)
+ 		case OpPush:
+ 			vm.push(program.Constants[arg])
+ 
++		case OpPushInt:
++			vm.push(arg)
++
+ 		case OpPop:
+ 			vm.pop()
+ 
+@@ -196,7 +199,7 @@ func (vm *VM) Run(program *Program, env interface{}) (_ interface{}, err error)
+ 
+ 		case OpJumpIfEnd:
+ 			scope := vm.Scope()
+-			if scope.It >= scope.Len {
++			if scope.Index >= scope.Len {
+ 				vm.ip += arg
+ 			}
+ 
+@@ -431,14 +434,17 @@ func (vm *VM) Run(program *Program, env interface{}) (_ interface{}, err error)
+ 			a := vm.pop()
+ 			vm.push(runtime.Deref(a))
+ 
+-		case OpIncrementIt:
++		case OpIncrementIndex:
+ 			scope := vm.Scope()
+-			scope.It++
++			scope.Index++
+ 
+ 		case OpIncrementCount:
+ 			scope := vm.Scope()
+ 			scope.Count++
+ 
++		case OpGetIndex:
++			vm.push(vm.Scope().Index)
++
+ 		case OpGetCount:
+ 			scope := vm.Scope()
+ 			vm.push(scope.Count)
+@@ -449,7 +455,7 @@ func (vm *VM) Run(program *Program, env interface{}) (_ interface{}, err error)
+ 
+ 		case OpPointer:
+ 			scope := vm.Scope()
+-			vm.push(scope.Array.Index(scope.It).Interface())
++			vm.push(scope.Array.Index(scope.Index).Interface())
+ 
+ 		case OpBegin:
+ 			a := vm.pop()

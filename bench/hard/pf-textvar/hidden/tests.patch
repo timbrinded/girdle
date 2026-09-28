@@ -1,0 +1,90 @@
+diff --git a/flag_test.go b/flag_test.go
+index 58a5d25..9faaba4 100644
+--- a/flag_test.go
++++ b/flag_test.go
+@@ -1134,7 +1134,6 @@ func TestMultipleNormalizeFlagNameInvocations(t *testing.T) {
+ 	}
+ }
+ 
+-//
+ func TestHiddenFlagInUsage(t *testing.T) {
+ 	f := NewFlagSet("bob", ContinueOnError)
+ 	f.Bool("secretFlag", true, "shhh")
+@@ -1149,7 +1148,6 @@ func TestHiddenFlagInUsage(t *testing.T) {
+ 	}
+ }
+ 
+-//
+ func TestHiddenFlagUsage(t *testing.T) {
+ 	f := NewFlagSet("bob", ContinueOnError)
+ 	f.Bool("secretFlag", true, "shhh")
+@@ -1238,8 +1236,8 @@ func TestPrintDefaults(t *testing.T) {
+ 	fs.PrintDefaults()
+ 	got := buf.String()
+ 	if got != defaultOutput {
+-		fmt.Println("\n" + got)
+-		fmt.Println("\n" + defaultOutput)
++		fmt.Print("\n" + got + "\n")
++		fmt.Print("\n" + defaultOutput + "\n")
+ 		t.Errorf("got %q want %q\n", got, defaultOutput)
+ 	}
+ }
+diff --git a/text_test.go b/text_test.go
+new file mode 100644
+index 0000000..2a667ab
+--- /dev/null
++++ b/text_test.go
+@@ -0,0 +1,53 @@
++package pflag
++
++import (
++	"fmt"
++	"os"
++	"testing"
++	"time"
++)
++
++func setUpTime(t *time.Time) *FlagSet {
++	f := NewFlagSet("test", ContinueOnError)
++	f.TextVar(t, "time", time.Now(), "time stamp")
++	return f
++}
++
++func TestText(t *testing.T) {
++	testCases := []struct {
++		input    string
++		success  bool
++		expected time.Time
++	}{
++		{"2003-01-02T15:04:05Z", true, time.Date(2003, 1, 2, 15, 04, 05, 0, time.UTC)},
++		{"2003-01-02 15:05:01", false, time.Date(2002, 1, 2, 15, 05, 05, 07, time.UTC)},
++		{"2024-11-22T03:01:02Z", true, time.Date(2024, 11, 22, 3, 1, 02, 0, time.UTC)},
++		{"2006-01-02T15:04:05+07:00", true, time.Date(2006, 1, 2, 15, 4, 5, 0, time.FixedZone("UTC+7", 7*60*60))},
++	}
++
++	devnull, _ := os.Open(os.DevNull)
++	os.Stderr = devnull
++	for i := range testCases {
++		var ts time.Time
++		f := setUpTime(&ts)
++		tc := &testCases[i]
++		arg := fmt.Sprintf("--time=%s", tc.input)
++		err := f.Parse([]string{arg})
++		if err != nil && tc.success == true {
++			t.Errorf("expected success, got %q", err)
++			continue
++		} else if err == nil && tc.success == false {
++			t.Errorf("expected failure, but succeeded")
++			continue
++		} else if tc.success {
++			parsedT := new(time.Time)
++			err := f.GetText("time", parsedT)
++			if err != nil {
++				t.Errorf("Got error trying to fetch the time flag: %v", err)
++			}
++			if !parsedT.Equal(tc.expected) {
++				t.Errorf("expected %q, got %q", tc.expected, parsedT)
++			}
++		}
++	}
++}

@@ -1,0 +1,28 @@
+diff --git a/mux_test.go b/mux_test.go
+index cb3bbe0..7f123f0 100644
+--- a/mux_test.go
++++ b/mux_test.go
+@@ -2784,6 +2784,23 @@ func TestMethodNotAllowed(t *testing.T) {
+ 	}
+ }
+ 
++func TestMethodNotAllowedSubrouterWithSeveralRoutes(t *testing.T) {
++	handler := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
++
++	router := NewRouter()
++	subrouter := router.PathPrefix("/v1").Subrouter()
++	subrouter.HandleFunc("/api", handler).Methods(http.MethodGet)
++	subrouter.HandleFunc("/api/{id}", handler).Methods(http.MethodGet)
++
++	w := NewRecorder()
++	req := newRequest(http.MethodPut, "/v1/api")
++	router.ServeHTTP(w, req)
++
++	if w.Code != http.StatusMethodNotAllowed {
++		t.Errorf("Expected status code 405 (got %d)", w.Code)
++	}
++}
++
+ type customMethodNotAllowedHandler struct {
+ 	msg string
+ }
