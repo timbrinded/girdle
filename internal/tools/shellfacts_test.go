@@ -59,7 +59,7 @@ func TestOfflineCommands(t *testing.T) {
 		{"curl -s -m 5 " + srv.URL, "local ok"},
 		{"curl -s -m 5 -o /dev/null -w 'code=%{http_code}' https://example.com || true", "code=000"},
 	} {
-		out, _ := RunCheck(t.Context(), t.TempDir(), tc.command, Options{Offline: true})
+		out, _, _ := RunCheck(t.Context(), t.TempDir(), tc.command, Options{Offline: true})
 		if !strings.Contains(out, tc.want) {
 			t.Errorf("%q: %q, want %q", tc.command, out, tc.want)
 		}

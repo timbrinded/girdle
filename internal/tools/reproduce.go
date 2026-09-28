@@ -110,12 +110,17 @@ func (t toolset) reproduce(ctx context.Context, cmd string) (note string, weak b
 	var run shellRun
 	t.withOriginals(paths, func() { run = t.check(ctx, cmd) })
 	switch {
-	case run.refused:
-		// A command that never ran shows nothing either way.
-		return "[Girdle] reproduce could not be run: " + clip.Tail(run.out, 400), false
+	case run.refused, run.code == 126, run.code == 127, run.code < 0:
+		// Refused, not executable, not found, or cut short: a command that
+		// never ran to the end shows nothing either way.
+		return "[Girdle] reproduce could not be run: " + clip.Tail(run.text(), 400), false
 	case run.code == 0:
 		return "[Girdle] Your reproduce command also passes WITHOUT your fix, so it doesn't reproduce the bug. Change the test so it fails on the old code and passes on the new one, then apply again.\n" + clip.Tail(run.text(), 800), true
-	default:
+	case t.testRan != nil && t.testRan(ctx, cmd, clip.End(run.text(), 3000)):
 		return fmt.Sprintf("[Girdle] Without your fix, the reproduce command fails (exit code %d); with it, the check passes. The test reproduces the bug.", run.code), false
+	default:
+		// A test that was never found, collected or built fails too, and
+		// proves nothing: no reproduction is claimed without evidence.
+		return fmt.Sprintf("[Girdle] Without your fix, the reproduce command fails (exit code %d), but its output doesn't show the test itself running and failing, so it isn't shown to reproduce the bug. If the test wasn't found, collected or built, fix the reproduce command.\n", run.code) + clip.Tail(run.text(), 800), false
 	}
 }

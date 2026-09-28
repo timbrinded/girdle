@@ -3,6 +3,9 @@ package checkpoint
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
@@ -22,8 +25,10 @@ type Call struct {
 var errNoClient = errors.New("no Jev client")
 
 // ask sends questions about state to Jev and records the call. ok is false
-// when there is no client or the request failed, and the checkpoint then
-// falls back to its default: every checkpoint degrades the same way.
+// when there is no client, the request failed or a question went
+// unanswered, and the checkpoint then falls back to its default: every
+// checkpoint degrades the same way. An unanswered question reads as a zero
+// probability, which would let the tripwire allow a command it never judged.
 func ask(ctx context.Context, c *jev.Client, state any, questions map[string]jev.Question) (call Call, ok bool) {
 	if c == nil {
 		return Call{Error: errNoClient.Error()}, false
@@ -36,5 +41,11 @@ func ask(ctx context.Context, c *jev.Client, state any, questions map[string]jev
 		return call, false
 	}
 	call.Answers, call.JevModel, call.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
+	for _, k := range slices.Sorted(maps.Keys(questions)) {
+		if _, answered := res.Answers[k]; !answered {
+			call.Error = fmt.Sprintf("jev: no answer to %q", k)
+			return call, false
+		}
+	}
 	return call, true
 }

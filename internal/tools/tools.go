@@ -51,6 +51,11 @@ type Options struct {
 	// GrepContext adds to search results the definitions the matches are
 	// in, and shows them when there are few.
 	GrepContext bool
+	// TestRan, if set, judges whether a reproduce command that failed with
+	// the fix undone ran its test and saw it fail, rather than never running
+	// it. It returns false when it can't tell. Without it, no reproduction is
+	// claimed.
+	TestRan func(ctx context.Context, command, output string) bool
 }
 
 // offlineRules deny outbound network access except to this machine.
@@ -128,10 +133,12 @@ type toolset struct {
 	denyRead []*regexp.Regexp
 	// grepCtx: see Options.GrepContext.
 	grepCtx bool
+	// testRan: see Options.TestRan.
+	testRan func(ctx context.Context, command, output string) bool
 }
 
 func newToolset(dir string, opts Options) toolset {
-	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline, denyRead: opts.DenyRead, grepCtx: opts.GrepContext}
+	return toolset{dir: dir, guard: opts.Guard, offline: opts.Offline, denyRead: opts.DenyRead, grepCtx: opts.GrepContext, testRan: opts.TestRan}
 }
 
 func (t toolset) path(p string) string {

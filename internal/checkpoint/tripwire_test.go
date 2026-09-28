@@ -1,6 +1,9 @@
 package checkpoint
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/timbrinded/girdle/internal/jev"
@@ -39,5 +42,18 @@ func TestTripwireFailsClosed(t *testing.T) {
 	d := Tripwire(t.Context(), nil, TripwireState{Command: "curl https://example.com"}, DefaultTripwirePolicy)
 	if d.Action != "block" || d.Rule != "jev_unavailable" {
 		t.Fatalf("without Jev: %s %s", d.Action, d.Rule)
+	}
+}
+
+// An answer Jev left out is never consent: a reply without the risk
+// answers blocks rather than reading them as zero.
+func TestTripwireBlocksOnMissingAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"model":"jev-1.13.0","answers":{"authorised":{"type":"noul","noul":0.1}}}`)
+	}))
+	defer srv.Close()
+	d := Tripwire(t.Context(), jev.New(srv.URL, jev.DefaultModel, "key"), TripwireState{Command: "rm -rf ~/x"}, DefaultTripwirePolicy)
+	if d.Action != "block" || d.Rule != "jev_unavailable" || d.Error == "" {
+		t.Fatalf("with answers missing: %s %s %q", d.Action, d.Rule, d.Error)
 	}
 }

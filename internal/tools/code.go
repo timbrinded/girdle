@@ -115,15 +115,15 @@ var definitionPatterns = map[string][]string{
 
 var identifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 
-// FindDefinitions returns up to five definitions of name in dir's Go,
-// Python, JavaScript and TypeScript files, skipping tests when a non-test
-// definition exists.
-func FindDefinitions(ctx context.Context, dir, name string) []Definition {
+// FindDefinitions returns up to five definitions of name in the Go, Python,
+// JavaScript and TypeScript files among paths, which are relative to dir, as
+// SourceFiles lists them. It skips tests when a non-test definition exists.
+func FindDefinitions(dir string, paths []string, name string) []Definition {
 	if !identifier.MatchString(name) {
 		return nil
 	}
 	var defs, testDefs []Definition
-	for _, path := range SourceFiles(ctx, dir) {
+	for _, path := range paths {
 		pats, ok := definitionPatterns[filepath.Ext(path)]
 		if !ok {
 			continue

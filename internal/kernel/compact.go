@@ -73,7 +73,7 @@ func (s *Session) compact(ctx context.Context, task string, msgs []fantasy.Messa
 			pruned++
 		}
 	}
-	s.emit(Event{Type: EventCompact, Meta: map[string]string{"candidates": fmt.Sprint(len(older)), "pruned": fmt.Sprint(pruned)}})
+	s.emit(Event{Type: EventCompact, Compact: &d, Meta: map[string]string{"candidates": fmt.Sprint(len(older)), "pruned": fmt.Sprint(pruned)}})
 }
 
 func stubPruned(msgs []fantasy.Message, pruned map[string]bool) []fantasy.Message {

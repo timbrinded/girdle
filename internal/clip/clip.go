@@ -5,6 +5,7 @@
 package clip
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -17,10 +18,13 @@ func Split(s string, n, head int) (start, end string, omitted int) {
 	if len(s) <= n {
 		return s, "", 0
 	}
+	// The end's share is fixed before the head moves back to a character
+	// boundary: bytes the head gives up are left out, not handed to the end,
+	// so Head never picks up the last bytes of s.
+	tail := len(s) - (n - head)
 	for head > 0 && !utf8.RuneStart(s[head]) {
 		head--
 	}
-	tail := len(s) - (n - head)
 	for tail < len(s) && !utf8.RuneStart(s[tail]) {
 		tail++
 	}
@@ -39,6 +43,15 @@ func Head(s string, n int) string { return cut(s, n, n, "…") }
 
 // Tail keeps the end of s, without surrounding whitespace.
 func Tail(s string, n int) string { return cut(strings.TrimSpace(s), n, 0, "…") }
+
+// Lines keeps the first n lines of s and says how many more there were.
+func Lines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n… %d more lines", len(lines)-n)
+}
 
 func cut(s string, n, head int, mark string) string {
 	start, end, omitted := Split(s, n, head)

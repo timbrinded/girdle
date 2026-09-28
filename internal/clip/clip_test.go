@@ -39,6 +39,14 @@ func TestSplitCountsWhatItLeavesOut(t *testing.T) {
 	}
 }
 
+// A cut inside a character moves back to its start, and the bytes given up
+// are left out rather than taken from the end of the text.
+func TestHeadCutInsideACharacter(t *testing.T) {
+	if got := Head("abcé0123456789XYZ", 4); got != "abc…" {
+		t.Errorf("Head = %q, want %q", got, "abc…")
+	}
+}
+
 func TestResultsAreValidUTF8(t *testing.T) {
 	s := strings.Repeat("Crème Brûlée ñandú ", 40)
 	for n := 5; n < 200; n++ {
@@ -50,5 +58,14 @@ func TestResultsAreValidUTF8(t *testing.T) {
 	}
 	if got := Middle("ok \xff\xfe bytes", 100); !utf8.ValidString(got) {
 		t.Fatalf("invalid input bytes not replaced: %q", got)
+	}
+}
+
+func TestLines(t *testing.T) {
+	if got := Lines("a\nb", 2); got != "a\nb" {
+		t.Errorf("Lines kept %q", got)
+	}
+	if got := Lines("a\nb\nc\nd", 2); got != "a\nb\n… 2 more lines" {
+		t.Errorf("Lines = %q", got)
 	}
 }

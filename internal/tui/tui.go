@@ -240,8 +240,8 @@ func describeDecision(d *checkpoint.Decision) string {
 
 // toolArg shows the argument people care about: the command or the path.
 func toolArg(input string) string {
-	if paths, check, ok := tools.ParseApply(input); ok && len(paths) > 0 {
-		return firstLines(strings.Join(paths, ", ")+" · check: "+check, 1)
+	if in, ok := tools.ParseApplyInput(input); ok && len(in.Changes) > 0 {
+		return firstLines(strings.Join(in.Paths(), ", ")+" · check: "+in.Check, 1)
 	}
 	var lk tools.LookupInput
 	if json.Unmarshal([]byte(input), &lk) == nil && len(lk.Files)+len(lk.Definitions)+len(lk.Searches) > 0 {

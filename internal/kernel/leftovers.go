@@ -25,9 +25,14 @@ func (s *Session) leftovers(ctx context.Context) string {
 		case in := <-s.intent:
 			s.gone = &in
 			s.addUsage(Usage{JevTokens: in.InputTokens})
-			s.emit(Event{Type: EventLeftovers, Reason: "intent", Meta: map[string]string{
+			meta := map[string]string{
 				"gone": strings.Join(in.Gone, ","), "prune": strings.Join(in.Prune, ","), "latency_ms": fmt.Sprint(in.LatencyMS),
-			}})
+			}
+			// A failed request leaves nothing to check; say why.
+			if in.Error != "" {
+				meta["error"] = in.Error
+			}
+			s.emit(Event{Type: EventLeftovers, Reason: "intent", Meta: meta, Intent: &in})
 		case <-ctx.Done():
 			return ""
 		}
@@ -39,10 +44,11 @@ func (s *Session) leftovers(ctx context.Context) string {
 		if len(mentions) == 0 {
 			continue
 		}
-		must, tokens := checkpoint.MustChange(ctx, s.cfg.Jev, s.task, n, mentions)
-		s.addUsage(Usage{JevTokens: tokens})
-		if len(must) > 0 {
-			fmt.Fprintf(&b, "`%s` still appears where the task wants it gone:\n%s\n", n, strings.Join(must, "\n"))
+		d := checkpoint.MustChange(ctx, s.cfg.Jev, s.task, n, mentions)
+		s.addUsage(Usage{JevTokens: d.InputTokens})
+		s.emit(Event{Type: EventLeftovers, Reason: "must_change", MustChange: &d})
+		if len(d.Must) > 0 {
+			fmt.Fprintf(&b, "`%s` still appears where the task wants it gone:\n%s\n", n, strings.Join(d.Must, "\n"))
 			found = append(found, n)
 		}
 	}

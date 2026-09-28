@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +10,20 @@ import (
 	"charm.land/fantasy"
 )
 
+// testRan stands in for Jev's judgement of whether a reproduce command ran
+// its test.
+func testRan(ran bool) Options {
+	return Options{TestRan: func(context.Context, string, string) bool { return ran }}
+}
+
 func applyTool(t *testing.T, dir string) (fantasy.AgentTool, func()) {
 	t.Helper()
-	ts, reset := BatchedWithReset(dir, true, Options{})
+	return applyToolWith(t, dir, testRan(true))
+}
+
+func applyToolWith(t *testing.T, dir string, opts Options) (fantasy.AgentTool, func()) {
+	t.Helper()
+	ts, reset := BatchedWithReset(dir, true, opts)
 	for _, tool := range ts {
 		if tool.Info().Name == "apply" {
 			return tool, reset
@@ -81,5 +93,33 @@ func TestReproduceUndoesEveryChangeOfTheRequest(t *testing.T) {
 	res = runApply(t, apply, `{"changes":[{"path":"calc.txt","old_text":"3","new_text":"4"}],"check":"true","reproduce":"grep -q 3 calc.txt && exit 1; exit 0"}`)
 	if !strings.Contains(res.Content, "The test reproduces the bug") {
 		t.Fatalf("the new request's original is wrong:\n%s", res.Content)
+	}
+}
+
+// A failure without the fix proves the bug only if the test itself ran and
+// failed: one that was never found or run proves nothing, and no
+// reproduction is claimed for it.
+func TestReproduceClaimsNothingWithoutEvidence(t *testing.T) {
+	for name, tc := range map[string]struct {
+		opts      Options
+		reproduce string
+		want      string
+	}{
+		"test never ran":  {testRan(false), "exit 4", "isn't shown to reproduce the bug"},
+		"no judge":        {Options{}, "exit 1", "isn't shown to reproduce the bug"},
+		"command missing": {testRan(true), "no-such-command-girdle", "could not be run"},
+		"not executable":  {testRan(true), "exit 126", "could not be run"},
+	} {
+		dir := writeTree(t, map[string]string{"calc.txt": "2\n"})
+		apply, reset := applyToolWith(t, dir, tc.opts)
+		reset()
+		res := runApply(t, apply, `{"changes":[{"path":"calc.txt","old_text":"2","new_text":"3"}],"check":"true","reproduce":"`+tc.reproduce+`"}`)
+		if !strings.Contains(res.Content, tc.want) || strings.Contains(res.Content, "The test reproduces the bug") {
+			t.Errorf("%s:\n%s", name, res.Content)
+		}
+		// The check itself passed: only the claim is withheld.
+		if code, _ := ExitCode(res.Content); code != 0 {
+			t.Errorf("%s: exit code %d", name, code)
+		}
 	}
 }

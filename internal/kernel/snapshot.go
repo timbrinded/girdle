@@ -196,7 +196,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 	}
 	var tests []string
 	for _, name := range names {
-		defs := tools.FindDefinitions(ctx, dir, name)
+		defs := tools.FindDefinitions(dir, paths, name)
 		for _, d := range defs {
 			// A small file holding the named code is worth showing whole:
 			// the model reads it first anyway.
@@ -222,7 +222,7 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 			continue
 		}
 		if uses, err := tools.Search(ctx, dir, `\b`+name+`\b`, "", false); err == nil {
-			add(fmt.Sprintf("<uses name=%q>\n%s\n</uses>\n", name, clipLines(uses, 40)))
+			add(fmt.Sprintf("<uses name=%q>\n%s\n</uses>\n", name, clip.Lines(uses, 40)))
 		}
 	}
 	for _, t := range tests {
@@ -246,14 +246,6 @@ func namedCodeSnapshot(ctx context.Context, dir string, paths []string, total, b
 	b.WriteString("</repository_snapshot>")
 	snap.Text = b.String()
 	return snap
-}
-
-func clipLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= n {
-		return s
-	}
-	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n… %d more lines", len(lines)-n)
 }
 
 // agentFiles are the instruction files a repository writes for coding

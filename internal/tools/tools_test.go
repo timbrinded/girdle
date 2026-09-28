@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
@@ -48,6 +49,17 @@ func TestBashExitCodeAndTimeout(t *testing.T) {
 	res, _ = ts.bash(t.Context(), bashInput{Command: "sleep 5", TimeoutSeconds: 1}, fantasy.ToolCall{})
 	if !strings.Contains(res.Content, "timed out") {
 		t.Fatalf("got %q", res.Content)
+	}
+}
+
+// A refused check never ran, whatever exit code its result carries.
+func TestRunCheckReportsARefusal(t *testing.T) {
+	refuse := func(context.Context, string) string { return "it is catastrophic" }
+	if _, _, ran := RunCheck(t.Context(), t.TempDir(), "true", Options{Guard: refuse}); ran {
+		t.Error("refused check reported as run")
+	}
+	if _, code, ran := RunCheck(t.Context(), t.TempDir(), "exit 4", Options{}); !ran || code != 4 {
+		t.Errorf("RunCheck = %d, %v; want 4, true", code, ran)
 	}
 }
 
@@ -149,9 +161,9 @@ func TestApply(t *testing.T) {
 		t.Fatalf("changes sent as a string: %+v", res)
 	}
 
-	paths, check, ok := ParseApply(`{"changes":[{"path":"a.go","old_text":"x","new_text":"y"},{"path":"a.go","content":"z"},{"path":"b.go","content":""}],"check":"go test ./..."}`)
-	if !ok || !slices.Equal(paths, []string{"a.go", "b.go"}) || check != "go test ./..." {
-		t.Fatalf("ParseApply = %v, %q, %v", paths, check, ok)
+	in, ok := ParseApplyInput(`{"changes":[{"path":"a.go","old_text":"x","new_text":"y"},{"path":"a.go","content":"z"},{"path":"b.go","content":""}],"check":"go test ./..."}`)
+	if !ok || !slices.Equal(in.Paths(), []string{"a.go", "b.go"}) || in.Check != "go test ./..." {
+		t.Fatalf("ParseApplyInput = %v, %q, %v", in.Paths(), in.Check, ok)
 	}
 }
 

@@ -26,12 +26,13 @@ const (
 	EventSnapshot      EventType = "snapshot"   // files sent with a request
 	EventStep          EventType = "step"       // one LLM call: timing and usage
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
-	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, invalid, not ready or none written
+	EventCrossCheck    EventType = "crosscheck" // an independent test of the request: Reason is passed, failed, invalid, not run, not ready or none written
 	EventHeartbeat     EventType = "heartbeat"  // Jev's view of whether the turn is progressing
 	EventCompact       EventType = "compact"    // older tool output pruned from the context
 	EventReasoning     EventType = "reasoning"  // the LLM's reasoning summary for a step, logged only
 	EventTripwire      EventType = "tripwire"   // a shell command the tripwire judged or blocked
-	EventLeftovers     EventType = "leftovers"  // names or code the request wants gone, still there
+	EventLeftovers     EventType = "leftovers"  // what the request wants gone (intent), Jev's view of each mention (must_change), and what is still there (found)
+	EventReproduce     EventType = "reproduce"  // whether a reproduce command that failed without the fix ran its test
 	EventNudge         EventType = "nudge"
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"
@@ -55,9 +56,18 @@ type Event struct {
 	// Heartbeat is set on heartbeat events.
 	Heartbeat *checkpoint.HeartbeatDecision `json:"heartbeat,omitempty"`
 	Tripwire  *checkpoint.TripwireDecision  `json:"tripwire,omitempty"`
-	Outcome   Outcome                       `json:"outcome,omitempty"`
-	Reason    string                        `json:"reason,omitempty"`
-	Meta      map[string]string             `json:"meta,omitempty"`
+	// Compact and CrossCheck are set on the compact and crosscheck events
+	// that asked Jev.
+	Compact    *checkpoint.CompactDecision    `json:"compact,omitempty"`
+	CrossCheck *checkpoint.CrossCheckDecision `json:"crosscheck,omitempty"`
+	// Intent and MustChange are set on the leftovers events that asked Jev,
+	// and Reproduce on reproduce events.
+	Intent     *checkpoint.Intent             `json:"intent,omitempty"`
+	MustChange *checkpoint.MustChangeDecision `json:"must_change,omitempty"`
+	Reproduce  *checkpoint.ReproduceDecision  `json:"reproduce,omitempty"`
+	Outcome    Outcome                        `json:"outcome,omitempty"`
+	Reason     string                         `json:"reason,omitempty"`
+	Meta       map[string]string              `json:"meta,omitempty"`
 	// TTFTMS is how long a step waited for its first streamed token, and
 	// DurationMS how long the LLM call took in all.
 	TTFTMS     int64 `json:"ttft_ms,omitzero"`

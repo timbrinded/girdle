@@ -158,9 +158,14 @@ func (s *Session) runCrossCheck(ctx context.Context) string {
 		}
 		written = append(written, full)
 	}
-	out, code := tools.RunCheck(ctx, s.cfg.Dir, cc.check, s.toolOptions())
+	out, code, ran := tools.RunCheck(ctx, s.cfg.Dir, cc.check, s.toolOptions())
 	meta := map[string]string{"files": strings.Join(paths, ", "), "check": cc.check}
-	if code == 0 {
+	switch {
+	case !ran:
+		// A check that never ran says nothing about the agent's code.
+		s.emit(Event{Type: EventCrossCheck, Reason: "not run", Text: clip.Middle(out, 4000), Meta: meta})
+		return ""
+	case code == 0:
 		s.emit(Event{Type: EventCrossCheck, Reason: "passed", Text: clip.Middle(out, 4000), Meta: meta})
 		s.steps = append(s.steps, "independent cross-check "+strings.Join(paths, ", ")+" -> passed")
 		return ""
@@ -176,10 +181,10 @@ func (s *Session) runCrossCheck(ctx context.Context) string {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	meta["jev_valid"] = fmt.Sprint(d.Valid)
 	if !d.Valid {
-		s.emit(Event{Type: EventCrossCheck, Reason: "invalid", Text: clip.Middle(out, 4000), Meta: meta})
+		s.emit(Event{Type: EventCrossCheck, Reason: "invalid", Text: clip.Middle(out, 4000), Meta: meta, CrossCheck: &d})
 		return ""
 	}
-	s.emit(Event{Type: EventCrossCheck, Reason: "failed", Text: clip.Middle(out, 4000), Meta: meta})
+	s.emit(Event{Type: EventCrossCheck, Reason: "failed", Text: clip.Middle(out, 4000), Meta: meta, CrossCheck: &d})
 
 	var b strings.Builder
 	b.WriteString("[Girdle] An independent test, written from the task's words by another agent that couldn't see your code, fails against your change. It has been removed again. Decide whether the test or your code is wrong. If your code is wrong, fix it, add the failing case to your own tests, and apply again with your check. If the test is wrong, say why in one sentence.\n\n")

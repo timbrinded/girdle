@@ -41,8 +41,8 @@ func summarizeStep(call fantasy.ToolCallContent, result string) string {
 	if call.ToolName == "apply" {
 		// The input holds whole files; Jev needs only what changed and how
 		// it was checked.
-		if paths, check, ok := tools.ParseApply(input); ok {
-			input = "changes " + strings.Join(paths, ", ") + "; check: " + check
+		if in, ok := tools.ParseApplyInput(input); ok {
+			input = "changes " + strings.Join(in.Paths(), ", ") + "; check: " + in.Check
 		}
 	}
 	return fmt.Sprintf("%s %s -> %s", call.ToolName, clip.Middle(oneLine(input), 160), clip.End(oneLine(result), 700))

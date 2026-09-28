@@ -142,21 +142,13 @@ func (in ApplyInput) Paths() []string {
 	return paths
 }
 
-// ParseApply reads the files an apply call changes and its check command,
-// without the file contents.
-func ParseApply(input string) (paths []string, check string, ok bool) {
-	in, ok := ParseApplyInput(input)
-	if !ok {
-		return nil, "", false
-	}
-	return in.Paths(), in.Check, true
-}
-
 // RunCheck runs a check command in dir the way apply does, and returns its
-// output, ending with the exit-code line, and its exit code.
-func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int) {
+// output, ending with the exit-code line, and its exit code. ran is false
+// when the tripwire or the platform refused the command, so its exit code
+// says nothing about the code under test.
+func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int, ran bool) {
 	r := newToolset(dir, opts).check(ctx, command)
-	return r.text(), r.code
+	return r.text(), r.code, !r.refused
 }
 
 // check runs a check command with pipefail, so that "go test | tail" still

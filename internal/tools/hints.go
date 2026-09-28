@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // When a check fails because code used a name that doesn't exist, the
@@ -17,7 +19,10 @@ import (
 // type or module it looked in, so the names that really exist there are a
 // lookup code can do at once. These are facts read from the error text.
 
-const maxHintBytes = 4000
+const (
+	maxHintBytes = 4000
+	maxHintLines = 60
+)
 
 var (
 	goUndefinedQualified = regexp.MustCompile(`(?m)^(\S+\.go):\d+:\d+: undefined: (\w+)\.(\w+)`)
@@ -56,8 +61,12 @@ func Hints(ctx context.Context, dir, output string) string {
 	for _, m := range pyCannotImport.FindAllStringSubmatch(output, 3) {
 		add("module "+m[2]+" defines", pyTopLevel(dir, m[2]))
 	}
+	var files []string
 	for _, m := range pyObjectNoAttr.FindAllStringSubmatch(output, 3) {
-		for _, d := range FindDefinitions(ctx, dir, m[1]) {
+		if files == nil {
+			files = SourceFiles(ctx, dir)
+		}
+		for _, d := range FindDefinitions(dir, files, m[1]) {
 			add("class "+m[1]+" ("+d.Path+")", pyMembers(d.Source))
 		}
 	}
@@ -143,7 +152,7 @@ func goExports(pkgDir string) string {
 		}
 	}
 	slices.Sort(lines)
-	return clipHint(lines)
+	return clip.Lines(strings.Join(lines, "\n"), maxHintLines)
 }
 
 func goMethods(ctx context.Context, dir, typeName string) string {
@@ -170,7 +179,7 @@ func pyTopLevel(dir, module string) string {
 				lines = append(lines, "  "+strings.TrimSuffix(line, ":"))
 			}
 		}
-		return clipHint(lines)
+		return clip.Lines(strings.Join(lines, "\n"), maxHintLines)
 	}
 	return ""
 }
@@ -183,7 +192,7 @@ func pyMembers(classSource string) string {
 			lines = append(lines, "  "+strings.TrimSuffix(t, ":"))
 		}
 	}
-	return clipHint(lines)
+	return clip.Lines(strings.Join(lines, "\n"), maxHintLines)
 }
 
 var jsExport = regexp.MustCompile(`^export\s+(default\s+)?(async\s+)?(function\*?|class|const|let|var)\s+(\w+)`)
@@ -209,14 +218,5 @@ func jsExports(dir, module string) string {
 			lines = append(lines, "  "+strings.TrimRight(strings.TrimSpace(line), "{ "))
 		}
 	}
-	return clipHint(lines)
-}
-
-func clipHint(lines []string) string {
-	const maxLines = 60
-	if len(lines) > maxLines {
-		extra := len(lines) - maxLines
-		lines = append(lines[:maxLines], fmt.Sprintf("  … and %d more", extra))
-	}
-	return strings.Join(lines, "\n")
+	return clip.Lines(strings.Join(lines, "\n"), maxHintLines)
 }

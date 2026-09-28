@@ -17,9 +17,9 @@ import (
 // Intent is what the request asks to disappear.
 type Intent struct {
 	// Gone are the names the request wants renamed, replaced or removed.
-	Gone []string
+	Gone []string `json:"gone"`
 	// Prune are the files whose unused code the request wants removed.
-	Prune []string
+	Prune []string `json:"prune"`
 	Call
 }
 
@@ -56,24 +56,34 @@ func AskIntent(ctx context.Context, c *jev.Client, task string, names, files []s
 
 // MustChange asks, for each remaining mention of name, whether the request
 // needs it changed: a changelog line recording the rename, say, should stay.
-// It returns the mentions that must change.
-func MustChange(ctx context.Context, c *jev.Client, task, name string, mentions []string) ([]string, int64) {
+// If Jev can't be asked, every mention must change.
+func MustChange(ctx context.Context, c *jev.Client, task, name string, mentions []string) MustChangeDecision {
+	d := MustChangeDecision{Checkpoint: "must_change", Name: name, Mentions: mentions, Must: mentions}
 	if len(mentions) == 0 {
-		return mentions, 0
+		return d
 	}
 	qs := map[string]jev.Question{}
 	for i := range mentions {
 		qs[fmt.Sprintf("m%d", i)] = jev.Noul(fmt.Sprintf("For `task` to be done, must `mentions[%d]` change so that it no longer says `name`?", i))
 	}
-	call, ok := ask(ctx, c, map[string]any{"task": task, "name": name, "mentions": mentions}, qs)
-	if !ok {
-		return mentions, 0
+	var ok bool
+	if d.Call, ok = ask(ctx, c, map[string]any{"task": task, "name": name, "mentions": mentions}, qs); !ok {
+		return d
 	}
-	var out []string
+	d.Must = nil
 	for i, m := range mentions {
-		if call.Answers[fmt.Sprintf("m%d", i)].Noul >= 0.5 {
-			out = append(out, m)
+		if d.Answers[fmt.Sprintf("m%d", i)].Noul >= 0.5 {
+			d.Must = append(d.Must, m)
 		}
 	}
-	return out, call.InputTokens
+	return d
+}
+
+// MustChangeDecision records which mentions of a name must change.
+type MustChangeDecision struct {
+	Checkpoint string   `json:"checkpoint"`
+	Name       string   `json:"name"`
+	Mentions   []string `json:"mentions"`
+	Must       []string `json:"must"`
+	Call
 }

@@ -46,8 +46,12 @@ func (t toolset) lookup(ctx context.Context, in LookupInput, call fantasy.ToolCa
 		}
 		section(title, res.Content)
 	}
+	var files []string
+	if len(in.Definitions) > 0 {
+		files = SourceFiles(ctx, t.dir)
+	}
 	for _, name := range in.Definitions {
-		defs := FindDefinitions(ctx, t.dir, name)
+		defs := FindDefinitions(t.dir, files, name)
 		if len(defs) == 0 {
 			section("definition "+name, "not found; try a search")
 			continue

@@ -10,9 +10,10 @@ import (
 // The decision log is read by tools that expect a Jev call's fields at the
 // top level of each decision, as they were before Call was shared.
 func TestCallFieldsAreFlat(t *testing.T) {
-	d := Decision{Checkpoint: "turn_end", Call: Call{
-		Answers: map[string]jev.Answer{"status": {Type: "choice", Choice: "done"}}, JevModel: "jev-1.13.0", LatencyMS: 7, InputTokens: 11,
-	}}
+	d := Decision{
+		Checkpoint: "turn_end",
+		Answers:    map[string]jev.Answer{"status": {Type: "choice", Choice: "done"}}, JevModel: "jev-1.13.0", LatencyMS: 7, InputTokens: 11,
+	}
 	data, err := json.Marshal(d)
 	if err != nil {
 		t.Fatal(err)

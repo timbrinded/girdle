@@ -31,9 +31,10 @@ func TestFindDefinitions(t *testing.T) {
 		"more.py":           "import x\n\n\n@decorate\ndef window(seq, n,\n           step=1):\n    \"\"\"Doc.\"\"\"\n    if n:\n\n        return seq\n    return []\n\n\ndef after():\n    pass\n",
 		"lib.js":            "export function slugify(s) {\n  return s.toLowerCase();\n}\nconst other = 1;\n",
 	})
+	files := SourceFiles(t.Context(), dir)
 	check := func(name, wantPath, wantStart string, wantIn []string, wantOut []string) {
 		t.Helper()
-		defs := FindDefinitions(t.Context(), dir, name)
+		defs := FindDefinitions(dir, files, name)
 		if len(defs) != 1 {
 			t.Fatalf("%s: %d definitions: %+v", name, len(defs), defs)
 		}
@@ -56,7 +57,7 @@ func TestFindDefinitions(t *testing.T) {
 	check("Level", "a/heading.go", "11-11", []string{"type Level int"}, []string{"other"})
 	check("window", "more.py", "4-11", []string{"@decorate", "step=1):", "return []"}, []string{"def after"})
 	check("slugify", "lib.js", "1-3", []string{"toLowerCase"}, []string{"const other"})
-	if defs := FindDefinitions(t.Context(), dir, "missing"); len(defs) != 0 {
+	if defs := FindDefinitions(dir, files, "missing"); len(defs) != 0 {
 		t.Fatalf("found %v", defs)
 	}
 }

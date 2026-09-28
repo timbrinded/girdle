@@ -16,6 +16,9 @@ func (s *Session) toolOptions() tools.Options {
 	if s.cfg.Tripwire {
 		o.Guard = s.guard
 	}
+	if s.cfg.Reproduce && s.cfg.Jev != nil {
+		o.TestRan = s.testRan
+	}
 	return o
 }
 
