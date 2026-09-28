@@ -28,7 +28,11 @@ import (
 	"github.com/timbrinded/girdle/internal/tui"
 )
 
-const defaultModel = "meta/muse-spark-1.3-contributor"
+// defaultModel is free on OpenRouter for now, and it is what the fast flow
+// has been measured and tuned on since decision 0018. It is an anonymous
+// "stealth" model: its provider may log prompts, so it suits public code
+// only, and it may be withdrawn without notice (decision 0021).
+const defaultModel = "stealth/space-bunny-alpha"
 
 // OpenCode Zen's free LLMs only work inside OpenCode, but its free Jev
 // works anywhere (decision 0017). See https://opencode.ai/docs/zen.
