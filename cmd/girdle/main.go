@@ -211,7 +211,7 @@ func run() int {
 			picker = &tui.Models{
 				Store: store, List: saved, Catalog: catalog, Note: note, Open: open,
 				Fetch: func(ctx context.Context) (models.Catalog, error) {
-					return models.Fetch(ctx, http.DefaultClient, models.CatalogURL)
+					return models.FetchForKey(ctx, http.DefaultClient, os.Getenv("OPENROUTER_API_KEY"))
 				},
 			}
 		}

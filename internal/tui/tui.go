@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
@@ -53,16 +54,21 @@ type model struct {
 	events  <-chan kernel.Event
 	logPath string
 
-	// settings are what the next request uses. canRoute is set when Jev
-	// can choose efforts, and routed is the effort it chose for the latest
-	// request.
+	// settings are what the next request uses, and active what the running
+	// one started with. canRoute is set when Jev can choose efforts, and
+	// routed is the effort it chose for the latest request.
 	settings kernel.Settings
+	active   kernel.Settings
 	canRoute bool
 	routed   checkpoint.Effort
 	// models is nil when there is no model picker, and picker is set while
 	// it is open.
 	models *Models
 	picker *picker
+	// fetching is set while the catalogue loads, and fetchErr says why it
+	// last failed.
+	fetching bool
+	fetchErr string
 
 	vp        viewport.Model
 	input     textarea.Model
@@ -77,11 +83,13 @@ type model struct {
 
 func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Event, settings kernel.Settings, logPath string, models *Models) *model {
 	in := textarea.New()
-	in.Placeholder = "Ask Girdle to do something. Enter sends · " + keyHint(models) + " · ctrl+c stops or quits"
+	in.Placeholder = "Ask Girdle to do something"
 	in.ShowLineNumbers = false
 	in.SetHeight(3)
 	in.Prompt = "› "
 	in.KeyMap.InsertNewline.SetEnabled(false)
+	// ctrl+p cycles models, as in Pi; up still moves between lines.
+	in.KeyMap.LinePrevious.SetKeys("up")
 	in.Focus()
 	vp := viewport.New()
 	m := &model{
@@ -97,12 +105,50 @@ func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Ev
 	return m
 }
 
-// keyHint reminds the user how to change the model and effort.
-func keyHint(models *Models) string {
-	if models == nil {
-		return "shift+tab effort"
+// keyHint is the row under the input that reminds the user of the keys,
+// or of the commands while one is being typed.
+func (m *model) keyHint() string {
+	width := m.width - 1
+	if strings.HasPrefix(m.input.Value(), "/") {
+		hints := []hint{{"/model [search | id [effort]]  pick a model", 0}, {"/effort [level]  set the reasoning effort", 1}}
+		if m.models == nil {
+			hints = hints[1:]
+		}
+		return fitHints(width, hints, "   ·   ")
 	}
-	return "shift+tab effort · ctrl+l models"
+	quit := "ctrl+c quit"
+	if m.running {
+		quit = "ctrl+c stop"
+	}
+	hints := []hint{{"enter send", 4}, {"ctrl+l model", 0}, {"ctrl+p next model", 2}, {"shift+tab effort", 1}, {"/model /effort", 5}, {quit, 3}}
+	if m.models == nil {
+		hints = []hint{{"enter send", 2}, {"shift+tab effort", 0}, {"/effort", 3}, {quit, 1}}
+	}
+	return fitHints(width, hints, " · ")
+}
+
+// A hint is one key's reminder; rank 0 is the last to be dropped for room.
+type hint struct {
+	text string
+	rank int
+}
+
+// fitHints joins hints in order, dropping the least important until they
+// fit in width.
+func fitHints(width int, hints []hint, sep string) string {
+	hints = slices.Clone(hints)
+	for {
+		texts := make([]string, len(hints))
+		for i, h := range hints {
+			texts[i] = h.text
+		}
+		line := strings.Join(texts, sep)
+		if len(hints) == 1 || lipgloss.Width(line) <= width {
+			return line
+		}
+		worst := slices.MaxFunc(hints, func(a, b hint) int { return a.rank - b.rank })
+		hints = slices.DeleteFunc(hints, func(h hint) bool { return h == worst })
+	}
 }
 
 func (m *model) Init() tea.Cmd {
@@ -120,7 +166,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.input.SetWidth(msg.Width)
 		m.vp.SetWidth(msg.Width)
+		// The status line and the key hint take a line each.
 		m.vp.SetHeight(max(3, msg.Height-m.input.Height()-2))
+		if m.picker != nil {
+			m.sizePicker()
+		}
 		m.refresh()
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
@@ -140,13 +190,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+l":
 			if m.models == nil {
-				m.status = "the model picker works with OpenRouter only"
-			} else {
-				m.openPicker()
+				m.appendLine(dimStyle.Render("◇ the model picker works with OpenRouter only"))
+				return m, nil
+			}
+			return m, m.openPicker(pickModel, "")
+		case "ctrl+p":
+			if m.models != nil {
+				m.nextModel()
 			}
 			return m, nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
+			if cmd, ok := m.command(text); ok {
+				m.input.Reset()
+				return m, cmd
+			}
 			if text == "" || m.running {
 				return m, nil
 			}
@@ -164,10 +222,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case catalogMsg:
 		m.takeCatalog(msg)
 	case runDoneMsg:
+		if m.changed() {
+			m.routed = ""
+		}
 		m.running = false
 		m.cancel = nil
 		m.status = fmt.Sprintf("%s (%s) · %s", msg.outcome, msg.reason, usageLine(m.sess.Usage()))
 	case tea.MouseWheelMsg:
+		if m.picker != nil {
+			m.picker.step(map[tea.MouseButton]int{tea.MouseWheelUp: -1, tea.MouseWheelDown: 1}[msg.Button])
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
@@ -175,12 +240,49 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
+	if m.picker != nil {
+		// The search box's cursor blinks on messages like any other.
+		m.picker.search, cmd = m.picker.search.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 	return m, tea.Batch(cmds...)
+}
+
+// command runs a slash command typed at the prompt, and reports whether
+// text was one. Only a known command's name counts, so a prompt such as
+// "/usr/bin is missing" still goes to the agent.
+func (m *model) command(text string) (tea.Cmd, bool) {
+	name, arg, _ := strings.Cut(text, " ")
+	arg = strings.TrimSpace(arg)
+	switch name {
+	case "/model", "/models":
+		if m.models == nil {
+			m.appendLine(dimStyle.Render("◇ the model picker works with OpenRouter only"))
+			return nil, true
+		}
+		// "/model <id> [effort]" switches at once, as in Grok Build.
+		fields := strings.Fields(arg)
+		if len(fields) > 0 && (m.models.List.Has(fields[0]) || !m.models.Catalog.Gone(fields[0]) && len(m.models.Catalog.Models) > 0) {
+			if m.useModel(fields[0]) && len(fields) > 1 {
+				m.setEffort(fields[1])
+			}
+			return nil, true
+		}
+		return m.openPicker(pickModel, arg), true
+	case "/effort":
+		if arg == "" {
+			return m.openPicker(pickEffort, ""), true
+		}
+		m.setEffort(arg)
+		return nil, true
+	}
+	return nil, false
 }
 
 func (m *model) start(prompt string) tea.Cmd {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.running, m.cancel, m.status = true, cancel, "working…"
+	m.active, m.routed = m.settings, ""
 	return func() tea.Msg {
 		defer cancel()
 		o, r := m.sess.Run(ctx, prompt)
@@ -258,19 +360,35 @@ func (m *model) refresh() {
 }
 
 func (m *model) View() tea.View {
-	status := statusStyle.Render(fmt.Sprintf(" %s · %s · effort %s", m.status, m.settings.ModelName, m.effortLabel()))
-	if hint := dimStyle.Render(keyHint(m.models) + " "); lipgloss.Width(status)+lipgloss.Width(hint) < m.width {
-		status += strings.Repeat(" ", m.width-lipgloss.Width(status)-lipgloss.Width(hint)) + hint
-	}
 	var v tea.View
 	if m.picker != nil {
-		v = tea.NewView(m.pickerView(max(3, m.height-1)) + "\n" + status)
+		v = tea.NewView(m.pickerView(m.width, max(8, m.height-1)) + "\n" + m.statusLine())
 	} else {
-		v = tea.NewView(m.vp.View() + "\n" + status + "\n" + m.input.View())
+		hint := lipgloss.NewStyle().MaxWidth(max(1, m.width)).Render(dimStyle.Render(" " + m.keyHint()))
+		v = tea.NewView(m.vp.View() + "\n" + m.statusLine() + "\n" + m.input.View() + "\n" + hint)
 	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+// statusLine shows how the run stands on the left and, as in Pi's footer,
+// the model and effort on the right: those of the running request, and any
+// change waiting for the next.
+func (m *model) statusLine() string {
+	left := statusStyle.Render(" " + m.status)
+	settings := func(s kernel.Settings, effort string) string {
+		return statusStyle.Render(s.ModelName) + dimStyle.Render(" • ") + statusStyle.Render("effort "+effort)
+	}
+	right := settings(m.settings, m.effortLabel()) + " "
+	if m.running && m.changed() {
+		right = settings(m.active, m.labelFor(m.active, m.routed)) + dimStyle.Render(" → next ") + settings(m.settings, m.effortLabel()) + " "
+	}
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		return lipgloss.NewStyle().MaxWidth(max(1, m.width)).Render(left + " · " + right)
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func describeDecision(d *checkpoint.Decision) string {

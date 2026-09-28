@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -171,6 +172,9 @@ func (s *Session) applySettings() {
 	if set == nil {
 		return
 	}
+	if set.ModelName != s.cfg.ModelName {
+		s.history = portable(s.history)
+	}
 	s.given.Settings = *set
 	resolved := s.given.resolved()
 	// Only the fields settings decide change: goroutines still finishing the
@@ -178,6 +182,65 @@ func (s *Session) applySettings() {
 	s.cfg.Settings, s.cfg.Speculate = resolved.Settings, resolved.Speculate
 	s.useModel()
 	s.emit(Event{Type: EventSettings, Meta: s.settingsMeta()})
+}
+
+// portable rewrites a conversation, for a model that didn't write it, into
+// the form every chat API accepts:
+//   - Reasoning is dropped, with the messages that were only reasoning.
+//     Reasoning belongs to the model that wrote it, which may have signed or
+//     encrypted it.
+//   - An assistant message's tool calls are made one at a time, each
+//     followed by its result. Space Bunny's provider fails on any history
+//     with parallel calls, which Muse Spark makes.
+func portable(msgs []fantasy.Message) []fantasy.Message {
+	out := make([]fantasy.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		if m.Role != fantasy.MessageRoleAssistant {
+			out = append(out, m)
+			continue
+		}
+		var calls []fantasy.ToolCallPart
+		var rest []fantasy.MessagePart
+		for _, p := range m.Content {
+			switch p.GetType() {
+			case fantasy.ContentTypeReasoning:
+			case fantasy.ContentTypeToolCall:
+				if c, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](p); ok {
+					calls = append(calls, c)
+				}
+			default:
+				rest = append(rest, p)
+			}
+		}
+		var results []fantasy.MessagePart
+		if len(calls) > 1 && i+1 < len(msgs) && msgs[i+1].Role == fantasy.MessageRoleTool {
+			i++
+			results = msgs[i].Content
+		}
+		if results == nil {
+			if m.Content = slices.DeleteFunc(slices.Clone(m.Content), func(p fantasy.MessagePart) bool {
+				return p.GetType() == fantasy.ContentTypeReasoning
+			}); len(m.Content) > 0 {
+				out = append(out, m)
+			}
+			continue
+		}
+		// The assistant's text goes with the first call.
+		for k, call := range calls {
+			content := []fantasy.MessagePart{call}
+			if k == 0 {
+				content = append(rest, call)
+			}
+			out = append(out, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: content, ProviderOptions: m.ProviderOptions})
+			for _, r := range results {
+				if r, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](r); ok && r.ToolCallID == call.ToolCallID {
+					out = append(out, fantasy.Message{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{r}})
+				}
+			}
+		}
+	}
+	return out
 }
 
 // useModel builds the agent around cfg.Model.

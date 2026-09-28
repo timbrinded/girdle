@@ -103,15 +103,20 @@ func (l List) Latest(usable func(id string) bool) (string, bool) {
 }
 
 // Start chooses the model a session starts on: the default model, or
-// fallback if there is none. If the catalogue says that model is gone, it
-// is the most recently picked model the catalogue still lists, or fallback.
-// note explains a replacement.
+// without one the most recently picked model, as OpenCode does, or
+// fallback. If the catalogue says that model is gone, it is the most
+// recently picked model the catalogue still lists, or fallback. note
+// explains a replacement.
 func (l List) Start(c Catalog, fallback string) (id, note string) {
-	want := cmp.Or(l.Default.Model, fallback)
+	listed := func(id string) bool { return !c.Gone(id) }
+	want := l.Default.Model
+	if want == "" {
+		want, _ = l.Latest(listed)
+	}
+	want = cmp.Or(want, fallback)
 	if !c.Gone(want) {
 		return want, ""
 	}
-	listed := func(id string) bool { return !c.Gone(id) }
 	id, ok := l.Latest(listed)
 	if !ok && listed(fallback) {
 		id, ok = fallback, true

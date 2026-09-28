@@ -5,25 +5,37 @@ package models
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"math"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
-// CatalogURL lists OpenRouter's models. It needs no API key.
-const CatalogURL = "https://openrouter.ai/api/v1/models"
+// KeyCatalogURL lists the OpenRouter models an API key can use, after the
+// account's provider preferences, privacy settings and guardrails.
+// CatalogURL lists every model, and needs no key.
+const (
+	KeyCatalogURL = "https://openrouter.ai/api/v1/models/user"
+	CatalogURL    = "https://openrouter.ai/api/v1/models"
+)
 
 // Info is what OpenRouter's catalogue says about a model.
 type Info struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Context int    `json:"context,omitzero"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// About is the first sentence of OpenRouter's description.
+	About string `json:"about,omitempty"`
+	// Created is when OpenRouter added the model, in Unix seconds.
+	Created int64 `json:"created,omitzero"`
+	Context int   `json:"context,omitzero"`
 	// Tools reports that the model accepts tool calls, which Girdle needs.
 	Tools bool `json:"tools,omitzero"`
 	// Efforts are the reasoning efforts the model accepts, lowest first.
@@ -41,7 +53,10 @@ type Info struct {
 // Catalog is OpenRouter's list of models, as fetched at one time.
 type Catalog struct {
 	Fetched time.Time `json:"fetched,omitzero"`
-	Models  []Info    `json:"models"`
+	// ForKey is set when the list is the one for the user's API key,
+	// rather than every model OpenRouter has.
+	ForKey bool   `json:"for_key,omitzero"`
+	Models []Info `json:"models"`
 }
 
 // Lookup finds a model in the catalogue.
@@ -74,6 +89,8 @@ func (c Catalog) Efforts(id string) []checkpoint.Effort {
 type rawModel struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Created       int64  `json:"created"`
 	ContextLength int    `json:"context_length"`
 	Pricing       struct {
 		Prompt     string `json:"prompt"`
@@ -81,18 +98,37 @@ type rawModel struct {
 	} `json:"pricing"`
 	SupportedParameters []string `json:"supported_parameters"`
 	Reasoning           *struct {
-		SupportedEfforts []string `json:"supported_efforts"`
+		// SupportedEfforts is a list of efforts, null when the model takes
+		// every effort, or absent when it has no effort setting.
+		SupportedEfforts jsontext.Value `json:"supported_efforts"`
 	} `json:"reasoning"`
 	ExpirationDate string `json:"expiration_date"`
 }
 
-// Fetch downloads OpenRouter's catalogue.
-func Fetch(ctx context.Context, client *http.Client, url string) (Catalog, error) {
+// FetchForKey downloads the models key can use. If OpenRouter won't give
+// that list, it falls back to every model, and ForKey is false.
+func FetchForKey(ctx context.Context, client *http.Client, key string) (Catalog, error) {
+	c, err := Fetch(ctx, client, KeyCatalogURL, key)
+	if err == nil {
+		c.ForKey = true
+		return c, nil
+	}
+	if c, err2 := Fetch(ctx, client, CatalogURL, ""); err2 == nil {
+		return c, nil
+	}
+	return Catalog{}, err
+}
+
+// Fetch downloads OpenRouter's catalogue from url, with key if it's set.
+func Fetch(ctx context.Context, client *http.Client, url, key string) (Catalog, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Catalog{}, err
 	}
 	req.Header.Set("User-Agent", "girdle")
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return Catalog{}, err
@@ -118,6 +154,8 @@ func (r rawModel) info() Info {
 	m := Info{
 		ID:      r.ID,
 		Name:    r.Name,
+		About:   firstSentence(r.Description),
+		Created: r.Created,
 		Context: r.ContextLength,
 		Tools:   slices.Contains(r.SupportedParameters, "tools"),
 		Input:   perMillion(r.Pricing.Prompt),
@@ -125,9 +163,13 @@ func (r rawModel) info() Info {
 		Expires: r.ExpirationDate,
 	}
 	switch {
+	case r.Reasoning != nil && r.Reasoning.SupportedEfforts.Kind() == 'n':
+		m.Efforts = checkpoint.Efforts
 	case r.Reasoning != nil:
+		var supported []string
+		_ = json.Unmarshal(r.Reasoning.SupportedEfforts, &supported)
 		for _, e := range checkpoint.Efforts {
-			if slices.Contains(r.Reasoning.SupportedEfforts, string(e)) {
+			if slices.Contains(supported, string(e)) {
 				m.Efforts = append(m.Efforts, e)
 			}
 		}
@@ -137,6 +179,15 @@ func (r rawModel) info() Info {
 		m.Efforts = checkpoint.Efforts
 	}
 	return m
+}
+
+// firstSentence keeps a description short enough for one line.
+func firstSentence(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if before, _, ok := strings.Cut(s, ". "); ok {
+		s = before + "."
+	}
+	return clip.Head(s, 200)
 }
 
 // perMillion turns OpenRouter's price per token into dollars per million

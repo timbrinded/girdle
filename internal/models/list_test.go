@@ -69,9 +69,13 @@ func TestStartReplacesAWithdrawnModel(t *testing.T) {
 	if id, note := l.Start(cat, "builtin"); id != "b" || note == "" {
 		t.Fatalf("start = %q (%q), want b with a note", id, note)
 	}
-	// Without a default, the built-in model is used while it's listed.
+	// Without a default, the most recently picked model the catalogue
+	// lists is used, and with none, the built-in model.
 	l.Default.Model = ""
-	if id, note := l.Start(cat, "builtin"); id != "builtin" || note != "" {
+	if id, note := l.Start(cat, "builtin"); id != "b" || note != "" {
+		t.Fatalf("start = %q (%q), want b, picked last", id, note)
+	}
+	if id, note := (List{}).Start(cat, "builtin"); id != "builtin" || note != "" {
 		t.Fatalf("start = %q (%q), want builtin", id, note)
 	}
 	// An unknown catalogue withdraws nothing.

@@ -136,3 +136,97 @@ func TestNoEffortForAModelWithoutOne(t *testing.T) {
 		t.Fatalf("calls %v, want no effort sent", got)
 	}
 }
+
+func TestSwitchingModelDropsTheOldModelsReasoning(t *testing.T) {
+	var r recorder
+	s, _, _ := settingsSession(t, Settings{Model: r.model("a"), ModelName: "a", AutoEffort: true})
+	history := []fantasy.Message{
+		fantasy.NewUserMessage("task"),
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+			fantasy.ReasoningPart{Text: "a's private thoughts"},
+			fantasy.TextPart{Text: "Done."},
+		}},
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "only thoughts"}}},
+		fantasy.NewUserMessage("next"),
+	}
+	s.Seed(history)
+	reasoning := func() int {
+		n := 0
+		for _, m := range s.history {
+			for _, p := range m.Content {
+				if p.GetType() == fantasy.ContentTypeReasoning {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	// The same model keeps its own reasoning.
+	s.Configure(Settings{Model: r.model("a"), ModelName: "a", Effort: checkpoint.EffortHigh})
+	s.applySettings()
+	if reasoning() != 2 || len(s.history) != 4 {
+		t.Fatalf("same model: %d reasoning parts in %d messages", reasoning(), len(s.history))
+	}
+	// Another model gets the conversation without it; a message that was
+	// only reasoning goes.
+	s.Configure(Settings{Model: r.model("b"), ModelName: "b"})
+	s.applySettings()
+	if reasoning() != 0 || len(s.history) != 3 {
+		t.Fatalf("new model: %d reasoning parts in %d messages", reasoning(), len(s.history))
+	}
+	if text := s.history[1].Content[0].(fantasy.TextPart).Text; text != "Done." {
+		t.Fatalf("assistant text %q", text)
+	}
+	// The seeded slice is untouched.
+	if len(history[1].Content) != 2 {
+		t.Fatal("the caller's messages were changed")
+	}
+}
+
+func TestPortableSplitsParallelToolCalls(t *testing.T) {
+	call := func(id string) fantasy.ToolCallPart {
+		return fantasy.ToolCallPart{ToolCallID: id, ToolName: "read", Input: `{"path":"` + id + `"}`}
+	}
+	result := func(id string) fantasy.ToolResultPart {
+		return fantasy.ToolResultPart{ToolCallID: id, Output: fantasy.ToolResultOutputContentText{Text: id + " contents"}}
+	}
+	history := []fantasy.Message{
+		fantasy.NewUserMessage("task"),
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+			fantasy.ReasoningPart{Text: "thinking"}, fantasy.TextPart{Text: "Reading both."}, call("a"), &fantasy.ToolCallPart{ToolCallID: "b", ToolName: "read"},
+		}},
+		{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{result("b"), result("a")}},
+		{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{call("c")}},
+		{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{result("c")}},
+	}
+	// Each call is its own assistant message, followed by its own result,
+	// in the order the calls were made; the text goes with the first.
+	var got []string
+	for _, m := range portable(history) {
+		var parts []string
+		for _, p := range m.Content {
+			switch p.GetType() {
+			case fantasy.ContentTypeText:
+				parts = append(parts, "text")
+			case fantasy.ContentTypeToolCall:
+				c, _ := fantasy.AsMessagePart[fantasy.ToolCallPart](p)
+				parts = append(parts, "call "+c.ToolCallID)
+			case fantasy.ContentTypeToolResult:
+				r, _ := fantasy.AsMessagePart[fantasy.ToolResultPart](p)
+				parts = append(parts, "result "+r.ToolCallID)
+			default:
+				parts = append(parts, string(p.GetType()))
+			}
+		}
+		got = append(got, string(m.Role)+": "+strings.Join(parts, ", "))
+	}
+	want := []string{
+		"user: text",
+		"assistant: text, call a", "tool: result a",
+		"assistant: call b", "tool: result b",
+		"assistant: call c", "tool: result c",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
