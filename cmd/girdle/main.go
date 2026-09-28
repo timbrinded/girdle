@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,43 +118,25 @@ func run() int {
 	if *provider == "zen" && *model == "" {
 		return fail(errors.New("-provider zen needs -model: Zen's free models only work inside OpenCode, so pick a paid one"))
 	}
+	effort := checkpoint.Effort(*reasoning)
+	if !slices.Contains(checkpoint.Efforts, effort) {
+		return fail(fmt.Errorf("unknown -reasoning %q: use %s", effort, checkpoint.JoinEfforts(checkpoint.Efforts, ", ")))
+	}
 	cfg, open, err := buildConfig(*provider, *jevVia, !*noJev)
 	if err != nil {
 		return fail(err)
 	}
-	// The model picker's list, defaults and cached catalogue are
-	// OpenRouter's. With another provider, efforts are unknown and sent as
-	// asked.
+	interactive := *prompt == "" && *seedPath == ""
 	store := models.DefaultStore()
-	var saved models.List
-	var catalog models.Catalog
-	if *provider == "openrouter" {
-		if saved, err = store.Load(); err != nil {
-			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved models:", err)
-		}
-		// The catalogue is only a cache: without it, nothing is withdrawn.
-		catalog, _ = store.Catalog()
-	}
-	modelName, note := *model, ""
-	if modelName == "" {
-		modelName, note = saved.Start(catalog, defaultModel)
-	}
-	lm, err := open(ctx, modelName)
+	st := start{model: *model, effort: effort, auto: !*noRoute}
+	st.choose(store, *provider == "openrouter", interactive, explicit["reasoning"] || explicit["no-route"])
+	lm, err := open(ctx, st.model)
 	if err != nil {
 		return fail(err)
 	}
-	effort, auto := checkpoint.Effort(*reasoning), !*noRoute
-	if d := saved.Default.Effort; d != "" && !explicit["reasoning"] && !explicit["no-route"] {
-		e, a, err := models.ParseEffort(d)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved effort:", err)
-		} else {
-			effort, auto = cmp.Or(e, effort), a
-		}
-	}
 	cfg.Settings = kernel.Settings{
-		Model: lm, ModelName: modelName, Efforts: catalog.Efforts(modelName),
-		AutoEffort: auto, Effort: effort,
+		Model: lm, ModelName: st.model, Efforts: st.catalog.Efforts(st.model),
+		AutoEffort: st.auto, Effort: st.effort,
 	}
 	cfg.Dir = workDir
 	cfg.Policy.MaxNudges = *maxNudges
@@ -205,11 +188,11 @@ func run() int {
 	defer log.Close()
 	cfg.Log = log
 
-	if *prompt == "" && *seedPath == "" {
+	if interactive {
 		var picker *tui.Models
 		if *provider == "openrouter" {
 			picker = &tui.Models{
-				Store: store, List: saved, Catalog: catalog, Note: note, Open: open,
+				Store: store, List: st.saved, Catalog: st.catalog, Note: st.note, Open: open,
 				Fetch: func(ctx context.Context) (models.Catalog, error) {
 					return models.FetchForKey(ctx, http.DefaultClient, os.Getenv("OPENROUTER_API_KEY"))
 				},
@@ -220,8 +203,8 @@ func run() int {
 		}
 		return exitDone
 	}
-	if note != "" {
-		fmt.Fprintln(os.Stderr, "girdle:", note)
+	if st.note != "" {
+		fmt.Fprintln(os.Stderr, "girdle:", st.note)
 	}
 
 	if *timeoutFlag > 0 {
@@ -260,6 +243,46 @@ func run() int {
 		return exitCancelled
 	default:
 		return exitError
+	}
+}
+
+// start is what a session starts on, and the saved list and catalogue it
+// was chosen from.
+type start struct {
+	saved   models.List
+	catalog models.Catalog
+	model   string
+	note    string // why the default model wasn't used, if it wasn't
+	effort  checkpoint.Effort
+	auto    bool
+}
+
+// choose settles the model and effort a session starts on, from the flag
+// values already in st: flags first, then what the user saved, then the
+// defaults.
+// The saved list and the cached catalogue are OpenRouter's. Only the TUI
+// reads the catalogue: a headless run sends efforts as asked, so what it
+// sends never depends on when the TUI last cached the list on this machine.
+func (st *start) choose(store models.Store, openRouter, interactive, effortFlagged bool) {
+	if openRouter {
+		var err error
+		if st.saved, err = store.Load(); err != nil {
+			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved models:", err)
+		}
+		if interactive {
+			st.catalog, _ = store.Catalog()
+		}
+	}
+	if st.model == "" {
+		st.model, st.note = st.saved.Start(st.catalog, defaultModel)
+	}
+	if d := st.saved.Default.Effort; d != "" && !effortFlagged {
+		e, auto, err := models.ParseEffort(d)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved effort:", err)
+			return
+		}
+		st.effort, st.auto = cmp.Or(e, st.effort), auto
 	}
 }
 

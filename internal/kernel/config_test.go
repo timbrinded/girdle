@@ -41,8 +41,9 @@ func TestResolvedTurnsOffUnmetFeatures(t *testing.T) {
 			[]string{"early_stop", "crosscheck", "heartbeat", "compact"}},
 		{"no route", func(c *Config) { c.Route = false }, []string{"route", "auto_effort", "speculate"}},
 		// Jev still routes a pinned effort: its tests answer is used.
-		{"pinned effort", func(c *Config) { c.AutoEffort = false }, []string{"auto_effort", "speculate"}},
-		{"no efforts", func(c *Config) { c.EffortOptions = nil }, []string{"auto_effort", "speculate"}},
+		// Speculation stays on, to act if Jev is given the effort again.
+		{"pinned effort", func(c *Config) { c.AutoEffort = false }, []string{"auto_effort"}},
+		{"no efforts", func(c *Config) { c.EffortOptions = nil }, []string{"auto_effort"}},
 		{"no batch", func(c *Config) { c.Batch = false }, []string{"crosscheck", "reproduce"}},
 		{"no snapshot", func(c *Config) { c.Snapshot = false }, []string{"prefetch"}},
 		{"no early stop", func(c *Config) { c.EarlyStop = false }, []string{"early_stop", "crosscheck"}},

@@ -92,6 +92,8 @@ func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Ev
 	in.KeyMap.LinePrevious.SetKeys("up")
 	in.Focus()
 	vp := viewport.New()
+	// Auto is only ever set when Jev can choose, as the session applies it.
+	settings.AutoEffort = settings.AutoEffort && sess.CanAutoEffort()
 	m := &model{
 		ctx: ctx, sess: sess, events: events, logPath: logPath,
 		settings: settings, canRoute: sess.CanAutoEffort(), models: models,
@@ -99,8 +101,8 @@ func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Ev
 		status: "ready",
 		lines:  []string{dimStyle.Render(fmt.Sprintf("Girdle · %s · Jev checkpoints on · log %s", settings.ModelName, logPath))},
 	}
-	if models != nil {
-		m.startPicker()
+	if models != nil && models.Note != "" {
+		m.lines = append(m.lines, decisionStyle.Render("◇ "+models.Note))
 	}
 	return m
 }
@@ -189,13 +191,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleEffort()
 			return m, nil
 		case "ctrl+l":
-			if m.models == nil {
-				m.appendLine(dimStyle.Render("◇ the model picker works with OpenRouter only"))
+			if !m.needModels() {
 				return m, nil
 			}
 			return m, m.openPicker(pickModel, "")
 		case "ctrl+p":
-			if m.models != nil {
+			if m.needModels() {
 				m.nextModel()
 			}
 			return m, nil
@@ -230,7 +231,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("%s (%s) · %s", msg.outcome, msg.reason, usageLine(m.sess.Usage()))
 	case tea.MouseWheelMsg:
 		if m.picker != nil {
-			m.picker.step(map[tea.MouseButton]int{tea.MouseWheelUp: -1, tea.MouseWheelDown: 1}[msg.Button])
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.picker.step(-1)
+			case tea.MouseWheelDown:
+				m.picker.step(1)
+			}
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -238,12 +244,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	var cmd tea.Cmd
+	// While the picker is open the prompt is blurred, and ignores input.
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
-	if m.picker != nil {
-		// The search box's cursor blinks on messages like any other.
-		m.picker.search, cmd = m.picker.search.Update(msg)
+	if p := m.picker; p != nil {
+		// Its search takes pastes, and blinks on messages like any other.
+		before := p.search.Value()
+		p.search, cmd = p.search.Update(msg)
 		cmds = append(cmds, cmd)
+		if p.search.Value() != before && p.mode == pickModel {
+			p.note = ""
+			m.refind(true)
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -256,17 +268,24 @@ func (m *model) command(text string) (tea.Cmd, bool) {
 	arg = strings.TrimSpace(arg)
 	switch name {
 	case "/model", "/models":
-		if m.models == nil {
-			m.appendLine(dimStyle.Render("◇ the model picker works with OpenRouter only"))
+		if !m.needModels() {
 			return nil, true
 		}
-		// "/model <id> [effort]" switches at once, as in Grok Build.
+		// "/model <id> [effort]" switches at once, as in Grok Build, when the
+		// catalogue or the user's list knows the ID. Without a catalogue,
+		// anything shaped like an OpenRouter ID, provider/model, is taken as
+		// one. Anything else is a search.
 		fields := strings.Fields(arg)
-		if len(fields) > 0 && (m.models.List.Has(fields[0]) || !m.models.Catalog.Gone(fields[0]) && len(m.models.Catalog.Models) > 0) {
-			if m.useModel(fields[0]) && len(fields) > 1 {
-				m.setEffort(fields[1])
+		if len(fields) > 0 {
+			id := fields[0]
+			_, listed := m.models.Catalog.Lookup(id)
+			unchecked := len(m.models.Catalog.Models) == 0 && strings.Contains(id, "/")
+			if listed || m.models.List.Has(id) || unchecked {
+				if m.useModel(id) && len(fields) > 1 {
+					m.setEffort(fields[1])
+				}
+				return nil, true
 			}
-			return nil, true
 		}
 		return m.openPicker(pickModel, arg), true
 	case "/effort":
@@ -347,6 +366,16 @@ func (m *model) appendLine(s string) {
 	m.refresh()
 }
 
+// notify shows the result of an action: in the picker while it is open,
+// otherwise in the transcript.
+func (m *model) notify(s string) {
+	if m.picker != nil {
+		m.picker.note = s
+		return
+	}
+	m.appendLine(s)
+}
+
 func (m *model) refresh() {
 	content := strings.Join(m.lines, "\n")
 	if m.streaming.Len() > 0 {
@@ -382,7 +411,7 @@ func (m *model) statusLine() string {
 	}
 	right := settings(m.settings, m.effortLabel()) + " "
 	if m.running && m.changed() {
-		right = settings(m.active, m.labelFor(m.active, m.routed)) + dimStyle.Render(" → next ") + settings(m.settings, m.effortLabel()) + " "
+		right = settings(m.active, effortLabel(m.active, m.routed)) + dimStyle.Render(" → next ") + settings(m.settings, m.effortLabel()) + " "
 	}
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

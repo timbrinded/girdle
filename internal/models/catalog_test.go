@@ -26,8 +26,10 @@ const listing = `{"data": [
    "supported_parameters": ["tools"], "reasoning": {"mandatory": false}},
   {"id": "openrouter/auto", "name": "Auto Router", "pricing": {"prompt": "-1", "completion": "-1"},
    "supported_parameters": ["reasoning", "reasoning_effort", "tools"]},
-  {"id": "x/any-effort", "name": "Any", "supported_parameters": ["reasoning", "tools"],
+  {"id": "x/any-effort", "name": "Any", "supported_parameters": ["tools"],
    "reasoning": {"mandatory": false, "supported_efforts": null}},
+  {"id": "anthropic/claude-opus-4.5", "name": "Claude Opus 4.5", "supported_parameters": ["include_reasoning", "reasoning", "tools"],
+   "reasoning": {"mandatory": false}},
   {"id": "qwen/qwen3-max-thinking", "name": "Qwen3 Max Thinking", "pricing": {"prompt": "0.000001", "completion": "0.000005"},
    "supported_parameters": ["max_tokens"], "expiration_date": "2026-10-09"}
 ]}`
@@ -44,7 +46,7 @@ func TestFetchReadsTheCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Models) != 6 || c.Fetched.IsZero() {
+	if len(c.Models) != 7 || c.Fetched.IsZero() {
 		t.Fatalf("catalogue %+v", c)
 	}
 	bunny, _ := c.Lookup("stealth/space-bunny-alpha")
@@ -59,12 +61,26 @@ func TestFetchReadsTheCatalogue(t *testing.T) {
 	if !slices.Equal(muse.Efforts, []checkpoint.Effort{"none", "high"}) || muse.Input != 0.1 || muse.Output != 0.2 {
 		t.Errorf("muse %+v", muse)
 	}
-	// Null means every effort; absent means none.
+	// Null means every effort. A model that takes the reasoning parameter
+	// without listing efforts gets any effort as a thinking budget. One that
+	// takes neither gets none.
 	if anyEffort, _ := c.Lookup("x/any-effort"); !slices.Equal(anyEffort.Efforts, checkpoint.Efforts) {
 		t.Errorf("null supported_efforts gave %v", anyEffort.Efforts)
 	}
+	if opus, _ := c.Lookup("anthropic/claude-opus-4.5"); !slices.Equal(opus.Efforts, checkpoint.Efforts) {
+		t.Errorf("a reasoning model without listed efforts gave %v", opus.Efforts)
+	}
 	if cohere, _ := c.Lookup("cohere/command-a-plus"); len(cohere.Efforts) != 0 {
-		t.Errorf("a model without effort control has efforts %v", cohere.Efforts)
+		t.Errorf("a model without the reasoning parameter has efforts %v", cohere.Efforts)
+	}
+	// The index and a plain search agree.
+	plain := Catalog{Models: c.Models}
+	for _, id := range []string{"openrouter/auto", "nobody/nothing"} {
+		a, aok := c.Lookup(id)
+		b, bok := plain.Lookup(id)
+		if a.ID != b.ID || aok != bok {
+			t.Errorf("Lookup(%q): indexed %v %v, plain %v %v", id, a.ID, aok, b.ID, bok)
+		}
 	}
 	if auto, _ := c.Lookup("openrouter/auto"); !slices.Equal(auto.Efforts, checkpoint.Efforts) || auto.Input != -1 {
 		t.Errorf("router %+v", auto)
@@ -72,8 +88,8 @@ func TestFetchReadsTheCatalogue(t *testing.T) {
 	if q, _ := c.Lookup("qwen/qwen3-max-thinking"); q.Tools || q.Expires != "2026-10-09" {
 		t.Errorf("qwen %+v", q)
 	}
-	if !c.Gone("nobody/nothing") || c.Gone("openrouter/auto") {
-		t.Error("Gone disagrees with the listing")
+	if c.Listed("nobody/nothing") || !c.Listed("openrouter/auto") || !(Catalog{}).Listed("nobody/nothing") {
+		t.Error("Listed disagrees with the listing")
 	}
 	if !slices.Equal(c.Efforts("nobody/nothing"), checkpoint.Efforts) {
 		t.Error("an unknown model should accept every effort")
@@ -102,7 +118,7 @@ func TestFetchSendsTheKey(t *testing.T) {
 	if _, err := Fetch(t.Context(), srv.Client(), srv.URL, ""); err == nil {
 		t.Fatal("fetched without the key")
 	}
-	if c, err := Fetch(t.Context(), srv.Client(), srv.URL, "sk-test"); err != nil || len(c.Models) != 6 {
+	if c, err := Fetch(t.Context(), srv.Client(), srv.URL, "sk-test"); err != nil || len(c.Models) != 7 {
 		t.Fatalf("with the key: %d models, %v", len(c.Models), err)
 	}
 }

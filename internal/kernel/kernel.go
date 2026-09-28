@@ -10,7 +10,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,9 +39,6 @@ const (
 type Session struct {
 	ID  string
 	cfg Config
-	// given is the config as passed in, before resolving: settings resolve
-	// against it again.
-	given Config
 	// next holds settings Configure left for the next request.
 	next atomic.Pointer[Settings]
 	// canAuto is set when Jev can choose request efforts.
@@ -61,8 +57,9 @@ type Session struct {
 	usage   Usage
 	// callOptions override the agent's provider options for this run.
 	callOptions fantasy.ProviderOptions
-	// routing delivers Jev's route while the first call runs on a guess.
-	routing chan checkpoint.RouteDecision
+	// pendingRoute delivers Jev's route when the request didn't wait for
+	// it (route).
+	pendingRoute chan checkpoint.RouteDecision
 	// called is set once a request's first LLM call has started.
 	called atomic.Bool
 	// cross delivers this request's cross-check, until it has run.
@@ -121,11 +118,8 @@ func (s *Session) stopTurn(h halt) {
 
 // NewSession builds a session with the four built-in tools.
 func NewSession(cfg Config) *Session {
-	s := &Session{ID: uuid.New().String(), given: cfg, cfg: cfg.resolved(), edited: map[string]bool{}}
-	probe := cfg
-	probe.AutoEffort = true
-	s.canAuto = probe.resolved().AutoEffort
-	cfg = s.cfg
+	cfg = cfg.resolved()
+	s := &Session{ID: uuid.New().String(), cfg: cfg, canAuto: cfg.canAutoEffort(), edited: map[string]bool{}}
 	if cfg.Batch {
 		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
 	} else {
@@ -155,117 +149,6 @@ func NewSession(cfg Config) *Session {
 	maps.Copy(meta, s.settingsMeta())
 	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	return s
-}
-
-// Configure changes the model and reasoning effort from the next request
-// on. It is safe to call while a request runs.
-func (s *Session) Configure(set Settings) { s.next.Store(&set) }
-
-// CanAutoEffort reports whether Jev can choose request efforts, so that
-// Settings.AutoEffort takes effect.
-func (s *Session) CanAutoEffort() bool { return s.canAuto }
-
-// applySettings switches to the settings Configure left, if any, as a
-// request starts.
-func (s *Session) applySettings() {
-	set := s.next.Swap(nil)
-	if set == nil {
-		return
-	}
-	if set.ModelName != s.cfg.ModelName {
-		s.history = portable(s.history)
-	}
-	s.given.Settings = *set
-	resolved := s.given.resolved()
-	// Only the fields settings decide change: goroutines still finishing the
-	// last request may be reading the rest.
-	s.cfg.Settings, s.cfg.Speculate = resolved.Settings, resolved.Speculate
-	s.useModel()
-	s.emit(Event{Type: EventSettings, Meta: s.settingsMeta()})
-}
-
-// portable rewrites a conversation, for a model that didn't write it, into
-// the form every chat API accepts:
-//   - Reasoning is dropped, with the messages that were only reasoning.
-//     Reasoning belongs to the model that wrote it, which may have signed or
-//     encrypted it.
-//   - An assistant message's tool calls are made one at a time, each
-//     followed by its result. Space Bunny's provider fails on any history
-//     with parallel calls, which Muse Spark makes.
-func portable(msgs []fantasy.Message) []fantasy.Message {
-	out := make([]fantasy.Message, 0, len(msgs))
-	for i := 0; i < len(msgs); i++ {
-		m := msgs[i]
-		if m.Role != fantasy.MessageRoleAssistant {
-			out = append(out, m)
-			continue
-		}
-		var calls []fantasy.ToolCallPart
-		var rest []fantasy.MessagePart
-		for _, p := range m.Content {
-			switch p.GetType() {
-			case fantasy.ContentTypeReasoning:
-			case fantasy.ContentTypeToolCall:
-				if c, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](p); ok {
-					calls = append(calls, c)
-				}
-			default:
-				rest = append(rest, p)
-			}
-		}
-		var results []fantasy.MessagePart
-		if len(calls) > 1 && i+1 < len(msgs) && msgs[i+1].Role == fantasy.MessageRoleTool {
-			i++
-			results = msgs[i].Content
-		}
-		if results == nil {
-			if m.Content = slices.DeleteFunc(slices.Clone(m.Content), func(p fantasy.MessagePart) bool {
-				return p.GetType() == fantasy.ContentTypeReasoning
-			}); len(m.Content) > 0 {
-				out = append(out, m)
-			}
-			continue
-		}
-		// The assistant's text goes with the first call.
-		for k, call := range calls {
-			content := []fantasy.MessagePart{call}
-			if k == 0 {
-				content = append(rest, call)
-			}
-			out = append(out, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: content, ProviderOptions: m.ProviderOptions})
-			for _, r := range results {
-				if r, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](r); ok && r.ToolCallID == call.ToolCallID {
-					out = append(out, fantasy.Message{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{r}})
-				}
-			}
-		}
-	}
-	return out
-}
-
-// useModel builds the agent around cfg.Model.
-func (s *Session) useModel() {
-	s.model = sessionModel{LanguageModel: race.New(s.cfg.Model, s.cfg.Race, s.stagger, s.noteRace), s: s}
-	s.agent = fantasy.NewAgent(
-		s.model,
-		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
-		fantasy.WithTools(s.tools...),
-		fantasy.WithStopConditions(fantasy.StepCountIs(s.cfg.MaxStepsPerTurn)),
-	)
-}
-
-// settingsMeta records the settings for the log.
-func (s *Session) settingsMeta() map[string]string {
-	efforts := make([]string, len(s.cfg.Efforts))
-	for i, e := range s.cfg.Efforts {
-		efforts[i] = string(e)
-	}
-	return map[string]string{
-		"model":       s.cfg.ModelName,
-		"auto_effort": fmt.Sprint(s.cfg.AutoEffort),
-		"effort":      string(s.cfg.Effort),
-		"efforts":     strings.Join(efforts, ","),
-	}
 }
 
 // Usage returns the tokens used so far.
@@ -321,18 +204,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
-	switch {
-	case s.cfg.Speculate || s.cfg.Route && !s.cfg.AutoEffort:
-		// The first LLM call starts at once, on a guess or on the pinned
-		// effort, and Jev's route catches up with it. The goroutine gets its
-		// own copy of the channel: the first LLM call takes s.routing and
-		// clears it, possibly before the goroutine runs.
-		routing := make(chan checkpoint.RouteDecision, 1)
-		s.routing = routing
-		go func() { routing <- s.routeDecision(ctx, prompt) }()
-	default:
-		s.route(ctx, prompt)
-	}
+	s.route(ctx, prompt)
 	wg.Wait()
 	msg := prompt
 	if s.cfg.Snapshot {
@@ -383,34 +255,8 @@ func (s *Session) resetFacts() {
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
 	_, s.callOptions = s.cfg.effort(s.cfg.Effort)
-}
-
-// route asks Jev how hard the request is and sets its reasoning effort.
-func (s *Session) route(ctx context.Context, request string) {
-	if s.cfg.Route {
-		s.applyRoute(s.routeDecision(ctx, request))
-	}
-}
-
-func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.RouteDecision {
-	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy)
-}
-
-// applyRoute takes Jev's route for the request and sets the reasoning
-// effort its LLM calls use: Jev's choice with AutoEffort, unless the route
-// failed, and otherwise cfg.Effort, fitted to the model. It returns that
-// effort.
-func (s *Session) applyRoute(d checkpoint.RouteDecision) checkpoint.Effort {
-	s.addUsage(Usage{JevTokens: d.InputTokens})
-	s.testsAsked = d.Tests
-	want := s.cfg.Effort
-	if s.cfg.AutoEffort && d.Error == "" {
-		want = d.Effort
-	}
-	used, opts := s.cfg.effort(want)
-	s.callOptions = opts
-	s.emit(Event{Type: EventRoute, Route: &d, Effort: used})
-	return used
+	// A route still on its way belongs to the last request.
+	s.pendingRoute = nil
 }
 
 func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome, string) {
@@ -680,6 +526,8 @@ func (s *Session) noteRace(r race.Result) {
 }
 
 func (s *Session) end(o Outcome, reason string) (Outcome, string) {
+	// Log a route the request didn't wait for, if it came.
+	s.takeRoute(context.Background(), false)
 	u := s.Usage()
 	s.emit(Event{Type: EventRunEnd, Outcome: o, Reason: reason, Usage: &u})
 	return o, reason

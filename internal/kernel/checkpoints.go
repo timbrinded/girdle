@@ -46,6 +46,9 @@ func (s *Session) stepEnd(ctx context.Context, task string, requirements []strin
 	if !s.lastOK || len(s.edited) == 0 {
 		return false
 	}
+	// A pinned effort's route says whether the request asks for tests.
+	// Waiting for it here costs no more than the Jev request that follows.
+	s.takeRoute(ctx, true)
 	// A fact the threshold can't see: the request asks for tests and none
 	// have been written yet. Jev's coverage answers miss this.
 	if s.testsAsked >= 0.5 && !s.testsEdited {

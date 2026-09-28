@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +17,51 @@ import (
 	"charm.land/fantasy"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/jev"
 )
+
+func TestPinnedEffortDoesNotWaitForJev(t *testing.T) {
+	// Jev answers nothing until the test ends.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		http.Error(w, "gone", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	var r recorder
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(Config{
+		Settings: Settings{Model: r.model("a"), ModelName: "a", Efforts: checkpoint.Efforts, Effort: checkpoint.EffortHigh},
+		Jev:      &jev.Client{BaseURL: srv.URL, Model: "jev-test", APIKey: "test", HTTP: srv.Client()},
+		Dir:      dir, Route: true, RoutePolicy: checkpoint.DefaultRoutePolicy, Batch: true,
+		EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if outcome, reason := s.Run(ctx, "Replace the word old with new in a.txt."); outcome != OutcomeDone {
+		t.Fatalf("Run = %s, %s: a pinned request waited on Jev", outcome, reason)
+	}
+	if got := r.seen(); len(got) == 0 || got[0] != "a:high" {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+func TestANewRequestDropsTheLastOnesRoute(t *testing.T) {
+	stale := make(chan checkpoint.RouteDecision, 1)
+	stale <- checkpoint.RouteDecision{Effort: checkpoint.EffortHigh}
+	s := &Session{pendingRoute: stale}
+	s.resetFacts()
+	if s.pendingRoute != nil {
+		t.Fatal("a route from the last request survived")
+	}
+}
 
 // recorder notes which model each LLM call went to, and the effort it asked
 // for ("-" for none).

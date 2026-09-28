@@ -54,8 +54,8 @@ func speculate(t *testing.T, routed checkpoint.Effort, wantCalls int) (answer st
 	s = &Session{cfg: Config{Efforts: checkpoint.Efforts, AutoEffort: true, EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions {
 		return fantasy.ProviderOptions{string(e): nil}
 	}}}
-	s.routing = make(chan checkpoint.RouteDecision, 1)
-	s.routing <- checkpoint.RouteDecision{Effort: routed}
+	s.pendingRoute = make(chan checkpoint.RouteDecision, 1)
+	s.pendingRoute <- checkpoint.RouteDecision{Effort: routed}
 	st, err := sessionModel{LanguageModel: inner, s: s}.Stream(t.Context(), fantasy.Call{})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestSpeculationKeepsAMatchingGuess(t *testing.T) {
 	if answer != "low" || !slices.Equal(calls, []string{"low"}) {
 		t.Fatalf("answer %q from calls %v", answer, calls)
 	}
-	if s.routing != nil || s.callOptions == nil {
+	if s.pendingRoute != nil || s.callOptions == nil {
 		t.Fatal("the route was not applied")
 	}
 }

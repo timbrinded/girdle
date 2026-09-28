@@ -1,6 +1,9 @@
 package checkpoint
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // Effort is the reasoning effort the LLM is asked to use.
 type Effort string
@@ -18,6 +21,15 @@ const (
 // Efforts lists every reasoning effort OpenRouter names, lowest first. A
 // model whose efforts are unknown is assumed to accept all of them.
 var Efforts = []Effort{EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}
+
+// JoinEfforts lists efforts, separated by sep.
+func JoinEfforts(efforts []Effort, sep string) string {
+	names := make([]string, len(efforts))
+	for i, e := range efforts {
+		names[i] = string(e)
+	}
+	return strings.Join(names, sep)
+}
 
 // Fit returns the effort to ask of a model that accepts only supported: e
 // itself if supported has it, otherwise the lowest supported effort above

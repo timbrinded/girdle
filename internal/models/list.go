@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
@@ -26,11 +25,7 @@ func ParseEffort(s string) (effort checkpoint.Effort, auto bool, err error) {
 	}
 	e := checkpoint.Effort(s)
 	if !slices.Contains(checkpoint.Efforts, e) {
-		names := []string{EffortAuto}
-		for _, e := range checkpoint.Efforts {
-			names = append(names, string(e))
-		}
-		return "", false, fmt.Errorf("unknown effort %q: use %s", s, strings.Join(names, ", "))
+		return "", false, fmt.Errorf("unknown effort %q: use %s, %s", s, EffortAuto, checkpoint.JoinEfforts(checkpoint.Efforts, ", "))
 	}
 	return e, false, nil
 }
@@ -108,17 +103,16 @@ func (l List) Latest(usable func(id string) bool) (string, bool) {
 // recently picked model the catalogue still lists, or fallback. note
 // explains a replacement.
 func (l List) Start(c Catalog, fallback string) (id, note string) {
-	listed := func(id string) bool { return !c.Gone(id) }
 	want := l.Default.Model
 	if want == "" {
-		want, _ = l.Latest(listed)
+		want, _ = l.Latest(c.Listed)
 	}
 	want = cmp.Or(want, fallback)
-	if !c.Gone(want) {
+	if c.Listed(want) {
 		return want, ""
 	}
-	id, ok := l.Latest(listed)
-	if !ok && listed(fallback) {
+	id, ok := l.Latest(c.Listed)
+	if !ok && c.Listed(fallback) {
 		id, ok = fallback, true
 	}
 	if !ok {
@@ -138,8 +132,8 @@ type Store struct {
 // $XDG_STATE_HOME.
 func DefaultStore() Store {
 	home, _ := os.UserHomeDir()
-	dir := func(env string, fallback ...string) string {
-		return filepath.Join(cmp.Or(os.Getenv(env), filepath.Join(append([]string{home}, fallback...)...)), "girdle")
+	dir := func(env, fallback string) string {
+		return filepath.Join(cmp.Or(os.Getenv(env), filepath.Join(home, fallback)), "girdle")
 	}
 	return Store{
 		ListPath:    filepath.Join(dir("XDG_CONFIG_HOME", ".config"), "models.json"),
@@ -150,7 +144,8 @@ func DefaultStore() Store {
 // Load reads the list. A missing file is an empty list.
 func (s Store) Load() (List, error) {
 	var l List
-	return l, readJSON(s.ListPath, &l)
+	err := readJSON(s.ListPath, &l)
+	return l, err
 }
 
 // Update reads the list, applies change and writes it back. Reading first
@@ -167,7 +162,8 @@ func (s Store) Update(change func(*List)) (List, error) {
 // Catalog reads the cached catalogue. A missing file is an empty catalogue.
 func (s Store) Catalog() (Catalog, error) {
 	var c Catalog
-	return c, readJSON(s.CatalogPath, &c)
+	err := readJSON(s.CatalogPath, &c)
+	return c.indexed(), err
 }
 
 // SaveCatalog caches c.

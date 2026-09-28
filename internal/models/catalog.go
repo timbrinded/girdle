@@ -57,22 +57,38 @@ type Catalog struct {
 	// rather than every model OpenRouter has.
 	ForKey bool   `json:"for_key,omitzero"`
 	Models []Info `json:"models"`
+	// byID indexes Models for Lookup, which the picker calls for every row
+	// it draws. Fetch and Store.Catalog build it.
+	byID map[string]int
+}
+
+// indexed returns c with its models indexed by ID.
+func (c Catalog) indexed() Catalog {
+	c.byID = make(map[string]int, len(c.Models))
+	for i, m := range c.Models {
+		c.byID[m.ID] = i
+	}
+	return c
 }
 
 // Lookup finds a model in the catalogue.
 func (c Catalog) Lookup(id string) (Info, bool) {
-	i := slices.IndexFunc(c.Models, func(m Info) bool { return m.ID == id })
-	if i < 0 {
+	i, ok := c.byID[id]
+	if c.byID == nil {
+		i = slices.IndexFunc(c.Models, func(m Info) bool { return m.ID == id })
+		ok = i >= 0
+	}
+	if !ok {
 		return Info{}, false
 	}
 	return c.Models[i], true
 }
 
-// Gone reports that the catalogue is known and doesn't list id: OpenRouter
-// has withdrawn the model, or never had it.
-func (c Catalog) Gone(id string) bool {
+// Listed reports that the key can use model id, as far as the catalogue
+// knows: an empty catalogue withdraws nothing.
+func (c Catalog) Listed(id string) bool {
 	_, ok := c.Lookup(id)
-	return len(c.Models) > 0 && !ok
+	return ok || len(c.Models) == 0
 }
 
 // Efforts are the reasoning efforts model id accepts, lowest first. A model
@@ -99,7 +115,7 @@ type rawModel struct {
 	SupportedParameters []string `json:"supported_parameters"`
 	Reasoning           *struct {
 		// SupportedEfforts is a list of efforts, null when the model takes
-		// every effort, or absent when it has no effort setting.
+		// every effort, or absent (see info).
 		SupportedEfforts jsontext.Value `json:"supported_efforts"`
 	} `json:"reasoning"`
 	ExpirationDate string `json:"expiration_date"`
@@ -147,7 +163,7 @@ func Fetch(ctx context.Context, client *http.Client, url, key string) (Catalog, 
 	for _, r := range listing.Data {
 		c.Models = append(c.Models, r.info())
 	}
-	return c, nil
+	return c.indexed(), nil
 }
 
 func (r rawModel) info() Info {
@@ -162,20 +178,28 @@ func (r rawModel) info() Info {
 		Output:  perMillion(r.Pricing.Completion),
 		Expires: r.ExpirationDate,
 	}
+	// reasoning.supported_efforts lists the efforts a model takes, or is
+	// null when it takes every effort. A model that takes the reasoning
+	// parameter without listing efforts, such as Claude Opus 4.5, gets any
+	// effort turned into a thinking budget by OpenRouter; a router such as
+	// openrouter/auto passes it on to the model it picks. Either may be sent
+	// any effort, as Girdle did before it read the catalogue.
+	var efforts jsontext.Value
+	if r.Reasoning != nil {
+		efforts = r.Reasoning.SupportedEfforts
+	}
 	switch {
-	case r.Reasoning != nil && r.Reasoning.SupportedEfforts.Kind() == 'n':
-		m.Efforts = checkpoint.Efforts
-	case r.Reasoning != nil:
+	case efforts.Kind() == '[':
 		var supported []string
-		_ = json.Unmarshal(r.Reasoning.SupportedEfforts, &supported)
+		_ = json.Unmarshal(efforts, &supported)
 		for _, e := range checkpoint.Efforts {
 			if slices.Contains(supported, string(e)) {
 				m.Efforts = append(m.Efforts, e)
 			}
 		}
-	case slices.Contains(r.SupportedParameters, "reasoning_effort"):
-		// A router such as openrouter/auto takes an effort and passes it on
-		// to whichever model it picks, so any effort may apply.
+	case efforts.Kind() == 'n',
+		slices.Contains(r.SupportedParameters, "reasoning"),
+		slices.Contains(r.SupportedParameters, "reasoning_effort"):
 		m.Efforts = checkpoint.Efforts
 	}
 	return m

@@ -68,7 +68,9 @@ type Config struct {
 	Race  int
 	Hedge time.Duration
 	// Speculate starts a request's first LLM call on the usual effort while
-	// Jev routes it, instead of waiting for the route. It needs Route.
+	// Jev routes it, instead of waiting for the route. It needs Route, and
+	// acts only while Jev chooses the effort (AutoEffort), which settings
+	// can change between requests.
 	Speculate bool
 	// CrossCheck writes an independent test of each request in the
 	// background and runs it once the agent's own check passes. It needs
@@ -110,8 +112,8 @@ type Config struct {
 func (c Config) resolved() Config {
 	judged := c.Checkpoints && c.Jev != nil
 	c.Route = c.Route && c.Jev != nil
-	c.AutoEffort = c.AutoEffort && c.Route && c.EffortOptions != nil
-	c.Speculate = c.Speculate && c.AutoEffort
+	c.AutoEffort = c.AutoEffort && c.canAutoEffort()
+	c.Speculate = c.Speculate && c.Route
 	c.EarlyStop = c.EarlyStop && judged
 	c.CrossCheck = c.CrossCheck && c.Batch && c.EarlyStop
 	c.Heartbeat = c.Heartbeat && judged
@@ -123,6 +125,11 @@ func (c Config) resolved() Config {
 		c.MaxStepsPerTurn = 60
 	}
 	return c
+}
+
+// canAutoEffort reports whether Jev can choose request efforts.
+func (c Config) canAutoEffort() bool {
+	return c.Route && c.Jev != nil && c.EffortOptions != nil
 }
 
 // effort fits e to the model and builds the provider options that ask for

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/fantasy"
@@ -183,7 +184,7 @@ func TestRemovingTheModelInUsePromotesTheLastPicked(t *testing.T) {
 	l := listOf("a", "b", "c")
 	l.Default.Model = "a"
 	m := pickerModel(t, l, "a", true)
-	// Starting on a counts as picking it, so c is the next most recent.
+	// c was picked after b, so it takes over.
 	press(m, "ctrl+l", "ctrl+f")
 	if m.settings.ModelName != "c" {
 		t.Fatalf("in use: %q, want c, the latest picked after a", m.settings.ModelName)
@@ -404,7 +405,8 @@ func TestEffortRange(t *testing.T) {
 		{[]checkpoint.Effort{"none", "low", "medium", "high"}, "off, low–high"},
 		{[]checkpoint.Effort{"low", "high", "max"}, "low/high/max"},
 		{[]checkpoint.Effort{"high"}, "high"},
-		{nil, "no effort setting"},
+		{nil, "no effort"},
+		{checkpoint.Efforts, "any effort"},
 	} {
 		if got := effortRange(c.efforts); got != c.want {
 			t.Errorf("effortRange(%v) = %q, want %q", c.efforts, got, c.want)
@@ -440,5 +442,114 @@ func TestStatusShowsTheRunningModelAndWhatComesNext(t *testing.T) {
 	m.Update(runDoneMsg{outcome: kernel.OutcomeDone, reason: "done"})
 	if s := plain(m.statusLine()); strings.Contains(s, "next") || !strings.HasSuffix(strings.TrimSpace(s), "b • effort auto") {
 		t.Fatalf("after the run: %q", s)
+	}
+}
+
+func TestEffortPickerWithoutAModelPicker(t *testing.T) {
+	// With -provider zen there is no model picker, but /effort still works.
+	cfg := kernel.Config{Settings: kernel.Settings{ModelName: "zen-model", Efforts: checkpoint.Efforts, Effort: checkpoint.EffortMedium}, Dir: t.TempDir()}
+	m := newModel(t.Context(), kernel.NewSession(cfg), make(chan kernel.Event, 16), cfg.Settings, "log.jsonl", nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	if _, ok := m.command("/effort"); !ok || m.picker == nil {
+		t.Fatal("/effort didn't open")
+	}
+	if v := m.View().Content; !strings.Contains(v, "Reasoning effort") {
+		t.Fatalf("view:\n%s", v)
+	}
+	// The list starts on the current effort, medium; without Jev there is
+	// no auto.
+	if got := rowIDs(m.picker); got[0] != "none" || m.picker.selected() != "medium" {
+		t.Fatalf("efforts %v on %q", got, m.picker.selected())
+	}
+	press(m, "up", "enter")
+	if m.picker != nil || m.effortLabel() != "low" {
+		t.Fatalf("effort %q", m.effortLabel())
+	}
+	press(m, "ctrl+l")
+	if m.picker != nil || !strings.Contains(lastLine(m), "OpenRouter only") {
+		t.Fatalf("ctrl+l without OpenRouter: %q", lastLine(m))
+	}
+}
+
+func TestPastingIntoThePicker(t *testing.T) {
+	m := pickerModel(t, listOf("a"), "a", true)
+	press(m, "ctrl+l")
+	m.Update(tea.PasteMsg{Content: "muse"})
+	if m.picker.search.Value() != "muse" || len(m.picker.rows) != 2 {
+		t.Fatalf("search %q, rows %v", m.picker.search.Value(), rowIDs(m.picker))
+	}
+	if m.input.Value() != "" {
+		t.Fatalf("the paste reached the prompt too: %q", m.input.Value())
+	}
+	press(m, "esc")
+	m.Update(tea.PasteMsg{Content: "hello"})
+	if m.input.Value() != "hello" {
+		t.Fatalf("after closing, the prompt has %q", m.input.Value())
+	}
+}
+
+func TestModelCommandWithoutACatalogue(t *testing.T) {
+	m := pickerModel(t, listOf("a"), "a", true)
+	m.models.Catalog = models.Catalog{}
+	// An ID can't be checked, but it can be recognised, and the effort
+	// after it is an effort, not part of the ID.
+	if _, ok := m.command("/model x/y high"); !ok || m.settings.ModelName != "x/y" || m.effortLabel() != "high" {
+		t.Fatalf("on %q at %q", m.settings.ModelName, m.effortLabel())
+	}
+	if l := saved(t, m); !l.Has("x/y") || l.Has("x/y high") {
+		t.Fatalf("saved %+v", l)
+	}
+	// Typed into the picker, text with spaces is refused.
+	press(m, "ctrl+l")
+	typeText(m, "p/q high")
+	press(m, "enter")
+	if m.settings.ModelName != "x/y" || !strings.Contains(m.picker.note, "no spaces") {
+		t.Fatalf("on %q, note %q", m.settings.ModelName, m.picker.note)
+	}
+}
+
+func TestStartingDoesNotSaveTheModelInUse(t *testing.T) {
+	m := pickerModel(t, listOf("a"), "b", true)
+	if saved(t, m).Has("b") {
+		t.Fatal("a model from -model was saved to your models")
+	}
+	// It still shows as yours while it is in use.
+	press(m, "ctrl+l")
+	if got := rowIDs(m.picker)[:3]; !slices.Equal(got, []string{"Your models", "b", "a"}) {
+		t.Fatalf("rows %v", got)
+	}
+}
+
+func TestCtrlPPassesOverModelsTheKeyLost(t *testing.T) {
+	m := pickerModel(t, listOf("a", "gone", "b"), "a", true)
+	press(m, "ctrl+p")
+	if m.settings.ModelName != "b" {
+		t.Fatalf("ctrl+p went to %q", m.settings.ModelName)
+	}
+	press(m, "ctrl+p")
+	if m.settings.ModelName != "a" {
+		t.Fatalf("ctrl+p wrapped to %q", m.settings.ModelName)
+	}
+}
+
+func TestLongNamesAreCutByWidth(t *testing.T) {
+	long := strings.Repeat("x", 60) + "/model"
+	l := listOf(long)
+	l.Default.Model = long
+	m := pickerModel(t, l, long, true)
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	press(m, "ctrl+l")
+	for _, line := range strings.Split(m.View().Content, "\n") {
+		if !utf8.ValidString(line) || lipgloss.Width(line) > 60 {
+			t.Fatalf("line %q", line)
+		}
+	}
+	// Wherever the cut falls in "x… · default", the name fills its column
+	// exactly: cursor and mark, the name, a gap, then the facts.
+	for _, col := range []int{10, 11, 12, 13, 66, 67, 68} {
+		line := plain(m.drawRow(row{id: long}, false, col))
+		if want := 4 + col + 2 + lipgloss.Width(m.facts(long)); !utf8.ValidString(line) || lipgloss.Width(line) != want {
+			t.Fatalf("col %d: %q is %d wide, want %d", col, line, lipgloss.Width(line), want)
+		}
 	}
 }
