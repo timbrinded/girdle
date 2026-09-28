@@ -7,6 +7,7 @@ import (
 	"charm.land/fantasy"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // Long exploration fills the context with tool output the agent has already
@@ -45,12 +46,12 @@ func (s *Session) compact(ctx context.Context, task string, msgs []fantasy.Messa
 	for _, m := range msgs {
 		for _, part := range m.Content {
 			if tc, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](part); ok {
-				calls[tc.ToolCallID] = tc.ToolName + " " + clipMiddle(oneLine(tc.Input), 200)
+				calls[tc.ToolCallID] = tc.ToolName + " " + clip.Middle(oneLine(tc.Input), 200)
 			}
 			if tr, ok := fantasy.AsMessagePart[fantasy.ToolResultPart](part); ok {
 				text, _ := outputText(tr.Output)
 				if len(text) >= p.MinBytes && !s.pruned[tr.ToolCallID] {
-					results = append(results, candidate{tr.ToolCallID, calls[tr.ToolCallID] + " -> " + clipMiddle(oneLine(text), 600)})
+					results = append(results, candidate{tr.ToolCallID, calls[tr.ToolCallID] + " -> " + clip.Middle(oneLine(text), 600)})
 				}
 			}
 		}

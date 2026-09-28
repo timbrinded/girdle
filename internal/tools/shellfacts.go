@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // Before a shell command runs, the tripwire needs facts about it: what it
@@ -247,7 +249,7 @@ func ReadShell(ctx context.Context, line, project, home string) (ShellFacts, err
 			f.Destroys = append(f.Destroys, joined)
 		}
 		if slices.Contains(senders, name) {
-			f.Sends = append(f.Sends, clipTail(joined, 200))
+			f.Sends = append(f.Sends, clip.Tail(joined, 200))
 		}
 		for _, a := range args {
 			if isSecret(resolveHome(a, home)) || secretVar.MatchString(a) {
@@ -375,7 +377,7 @@ func inlineEffects(ctx context.Context, lang, code string) []string {
 			Text string `json:"text"`
 		}
 		if json.Unmarshal([]byte(l), &m) == nil && m.Text != "" {
-			effects = append(effects, clipTail(m.Text, 120))
+			effects = append(effects, clip.Tail(m.Text, 120))
 		}
 	}
 	return effects

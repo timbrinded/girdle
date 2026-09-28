@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // A search result is a list of lines, and the agent's next step is often to
@@ -183,7 +185,7 @@ func (t toolset) aroundMatches(output string) string {
 			for head < end && !unitStart.MatchString(lines[head]) && !pyUnit.MatchString(lines[head]) {
 				head++
 			}
-			units = append(units, &unit{path: l.path, start: start, end: end, head: clipLine(strings.TrimSpace(lines[head])), lines: lines, hits: []int{l.line}})
+			units = append(units, &unit{path: l.path, start: start, end: end, head: clip.Head(strings.TrimSpace(lines[head]), maxLineWidth), lines: lines, hits: []int{l.line}})
 		}
 	}
 	if len(units) == 0 {

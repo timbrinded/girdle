@@ -105,30 +105,23 @@ func (t toolset) apply(ctx context.Context, in ApplyInput, call fantasy.ToolCall
 		return fantasy.NewTextResponse(b.String()), nil
 	}
 	fmt.Fprintf(&b, "$ %s\n", in.Check)
-	// pipefail, so that "go test | tail" still fails when the tests do.
-	out := t.shell(ctx, "set -o pipefail\n"+in.Check, defaultTimeout).text()
-	if code, ok := ExitCode(out); ok && code == 0 && in.Reproduce != "" {
-		// The note goes before the exit-code line. A test that doesn't
-		// reproduce the bug turns the result into a failure, so it isn't
-		// taken as proof.
+	run := t.check(ctx, in.Check)
+	// A test that doesn't reproduce the bug turns the result into a failure,
+	// so it isn't taken as proof.
+	if run.code == 0 && in.Reproduce != "" {
 		if note, weak := t.reproduce(ctx, in.Reproduce); note != "" {
-			if head, tail, found := strings.CutLast(out, "\n"+exitTrailer); found {
-				if weak {
-					tail = "1]"
-				}
-				out = head + "\n\n" + note + "\n" + exitTrailer + tail
+			run.note(note)
+			if weak {
+				run.code = 1
 			}
 		}
 	}
-	if code, ok := ExitCode(out); ok && code != 0 {
-		if hints := Hints(ctx, t.dir, out); hints != "" {
-			// The hints go before the exit-code line, which stays last.
-			if head, tail, found := strings.CutLast(out, "\n"+exitTrailer); found {
-				out = head + "\n\n" + hints + "\n" + exitTrailer + tail
-			}
+	if run.code != 0 {
+		if hints := Hints(ctx, t.dir, run.out); hints != "" {
+			run.note(hints)
 		}
 	}
-	b.WriteString(out)
+	b.WriteString(run.text())
 	return fantasy.NewTextResponse(b.String()), nil
 }
 
@@ -159,15 +152,15 @@ func ParseApply(input string) (paths []string, check string, ok bool) {
 	return in.Paths(), in.Check, true
 }
 
-// RunCheck runs a check command in dir the way apply does, with pipefail,
-// and returns its output and exit code. ok is false if the exit code is
-// missing from the output.
-func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int, ok bool) {
-	return newToolset(dir, opts).runCheck(ctx, command)
+// RunCheck runs a check command in dir the way apply does, and returns its
+// output, ending with the exit-code line, and its exit code.
+func RunCheck(ctx context.Context, dir, command string, opts Options) (out string, code int) {
+	r := newToolset(dir, opts).check(ctx, command)
+	return r.text(), r.code
 }
 
-func (t toolset) runCheck(ctx context.Context, command string) (out string, code int, ok bool) {
-	out = t.shell(ctx, "set -o pipefail\n"+command, defaultTimeout).text()
-	code, ok = ExitCode(out)
-	return out, code, ok
+// check runs a check command with pipefail, so that "go test | tail" still
+// fails when the tests do.
+func (t toolset) check(ctx context.Context, command string) shellRun {
+	return t.shell(ctx, "set -o pipefail\n"+command, defaultTimeout)
 }

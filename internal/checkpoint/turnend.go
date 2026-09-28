@@ -8,7 +8,6 @@ import (
 	"maps"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -45,16 +44,12 @@ type TurnState struct {
 
 // Decision records one checkpoint evaluation for the event log.
 type Decision struct {
-	Checkpoint  string                `json:"checkpoint"`
-	Action      Action                `json:"action"`
-	Rule        string                `json:"rule"`
-	Nudge       string                `json:"nudge,omitempty"`
-	State       TurnState             `json:"state"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	JevModel    string                `json:"jev_model,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Checkpoint string    `json:"checkpoint"`
+	Action     Action    `json:"action"`
+	Rule       string    `json:"rule"`
+	Nudge      string    `json:"nudge,omitempty"`
+	State      TurnState `json:"state"`
+	Call
 }
 
 // turnEndBase is asked whenever the LLM ends a turn without calling a tool.
@@ -237,14 +232,11 @@ func coverageNudge(missing []string) string {
 // unreachable it hands control to the user rather than guessing.
 func TurnEnd(ctx context.Context, c *jev.Client, s TurnState, p Policy, h History) Decision {
 	d := Decision{Checkpoint: "turn_end", State: s}
-	start := time.Now()
-	res, err := c.Ask(ctx, s, TurnEndQuestions(s.Requirements))
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Action, d.Rule, d.Error = Ask, "jev_unavailable", err.Error()
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, TurnEndQuestions(s.Requirements)); !ok {
+		d.Action, d.Rule = Ask, "jev_unavailable"
 		return d
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Action, d.Rule, d.Nudge = p.Decide(res.Answers, h, s.Requirements)
+	d.Action, d.Rule, d.Nudge = p.Decide(d.Answers, h, s.Requirements)
 	return d
 }

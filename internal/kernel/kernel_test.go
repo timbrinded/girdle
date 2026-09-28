@@ -8,16 +8,6 @@ import (
 	"charm.land/fantasy"
 )
 
-func TestClipMiddle(t *testing.T) {
-	if got := clipMiddle("short", 10); got != "short" {
-		t.Fatalf("got %q", got)
-	}
-	got := clipMiddle(strings.Repeat("a", 50)+strings.Repeat("z", 50), 30)
-	if !strings.HasPrefix(got, "aaaaaaaaaa") || !strings.HasSuffix(got, "zzzzzzzzzz") || !strings.Contains(got, " … ") {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestLastAssistantText(t *testing.T) {
 	msgs := []fantasy.Message{
 		fantasy.NewUserMessage("do it"),
@@ -48,18 +38,6 @@ func TestLastN(t *testing.T) {
 	}
 	if got := lastN([]string{"a"}, 5); len(got) != 1 {
 		t.Fatalf("got %v", got)
-	}
-}
-
-func TestClipMiddleKeepsUTF8Valid(t *testing.T) {
-	s := strings.Repeat("Crème Brûlée ñandú ", 40)
-	for n := 5; n < 200; n++ {
-		if got := clipMiddle(s, n); !utf8.ValidString(got) {
-			t.Fatalf("clipMiddle(_, %d) returned invalid UTF-8: %q", n, got)
-		}
-	}
-	if got := clipMiddle("ok \xff\xfe bytes", 100); !utf8.ValidString(got) {
-		t.Fatalf("invalid input bytes not replaced: %q", got)
 	}
 }
 

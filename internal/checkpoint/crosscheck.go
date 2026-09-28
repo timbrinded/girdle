@@ -2,7 +2,6 @@ package checkpoint
 
 import (
 	"context"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -26,13 +25,9 @@ var crossCheckQuestions = map[string]jev.Question{
 
 // CrossCheckDecision records the cross-check checkpoint.
 type CrossCheckDecision struct {
-	Checkpoint  string                `json:"checkpoint"`
-	Valid       bool                  `json:"valid"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	JevModel    string                `json:"jev_model,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Checkpoint string `json:"checkpoint"`
+	Valid      bool   `json:"valid"`
+	Call
 }
 
 // CrossCheck judges a failing cross-check. It is valid, and goes to the
@@ -40,14 +35,9 @@ type CrossCheckDecision struct {
 // unreachable the failure goes to the agent, which can still dismiss it.
 func CrossCheck(ctx context.Context, c *jev.Client, s CrossCheckState) CrossCheckDecision {
 	d := CrossCheckDecision{Checkpoint: "crosscheck", Valid: true}
-	start := time.Now()
-	res, err := c.Ask(ctx, s, crossCheckQuestions)
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Error = err.Error()
-		return d
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, crossCheckQuestions); ok {
+		d.Valid = d.Answers["test_at_fault"].Noul < 0.5
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Valid = res.Answers["test_at_fault"].Noul < 0.5
 	return d
 }

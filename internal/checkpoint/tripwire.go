@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -59,36 +58,23 @@ var DefaultTripwirePolicy = TripwirePolicy{Risk: 0.5, Authorised: 0.8}
 
 // TripwireDecision records one judgement for the event log.
 type TripwireDecision struct {
-	Action      string                `json:"action"` // "allow" or "block"
-	Rule        string                `json:"rule"`
-	Why         string                `json:"why,omitempty"`
-	State       TripwireState         `json:"state"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	JevModel    string                `json:"jev_model,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Action string        `json:"action"` // "allow" or "block"
+	Rule   string        `json:"rule"`
+	Why    string        `json:"why,omitempty"`
+	State  TripwireState `json:"state"`
+	Call
 }
 
 // Tripwire asks Jev whether a command is catastrophic. It fails closed.
 func Tripwire(ctx context.Context, c *jev.Client, s TripwireState, p TripwirePolicy) TripwireDecision {
 	d := TripwireDecision{State: s}
-	start := time.Now()
-	var res *jev.Response
-	var err error
-	if c == nil {
-		err = fmt.Errorf("no Jev client")
-	} else {
-		res, err = c.Ask(ctx, s, tripwireQuestions)
-	}
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Action, d.Rule, d.Error = "block", "jev_unavailable", err.Error()
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, tripwireQuestions); !ok {
+		d.Action, d.Rule = "block", "jev_unavailable"
 		d.Why = "the tripwire couldn't ask Jev about it, and it deletes, pushes or sends something"
 		return d
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Action, d.Rule, d.Why = p.Decide(res.Answers, s.DeletesResolved)
+	d.Action, d.Rule, d.Why = p.Decide(d.Answers, s.DeletesResolved)
 	return d
 }
 

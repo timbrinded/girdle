@@ -2,7 +2,6 @@ package checkpoint
 
 import (
 	"context"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -44,30 +43,23 @@ const (
 
 // HeartbeatDecision records one heartbeat.
 type HeartbeatDecision struct {
-	Checkpoint  string                `json:"checkpoint"`
-	Action      Action                `json:"action"`
-	Rule        string                `json:"rule"`
-	Nudge       string                `json:"nudge,omitempty"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	JevModel    string                `json:"jev_model,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Checkpoint string `json:"checkpoint"`
+	Action     Action `json:"action"`
+	Rule       string `json:"rule"`
+	Nudge      string `json:"nudge,omitempty"`
+	Call
 }
 
 // Heartbeat asks Jev how the turn is going. If Jev is unreachable the agent
 // simply carries on.
 func Heartbeat(ctx context.Context, c *jev.Client, s TurnState, p HeartbeatPolicy) HeartbeatDecision {
 	d := HeartbeatDecision{Checkpoint: "heartbeat", Action: Continue, Rule: "progressing"}
-	start := time.Now()
-	res, err := c.Ask(ctx, s, heartbeatQuestions)
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Rule, d.Error = "jev_unavailable", err.Error()
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, heartbeatQuestions); !ok {
+		d.Rule = "jev_unavailable"
 		return d
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Action, d.Rule, d.Nudge = p.Decide(res.Answers["trajectory"], s.Task)
+	d.Action, d.Rule, d.Nudge = p.Decide(d.Answers["trajectory"], s.Task)
 	return d
 }
 

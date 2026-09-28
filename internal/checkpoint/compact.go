@@ -3,7 +3,6 @@ package checkpoint
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -29,12 +28,9 @@ var DefaultCompactPolicy = CompactPolicy{Every: 8, KeepRecent: 4, MinBytes: 2000
 
 // CompactDecision records one compaction.
 type CompactDecision struct {
-	Checkpoint  string                `json:"checkpoint"`
-	Keep        []bool                `json:"keep"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Checkpoint string `json:"checkpoint"`
+	Keep       []bool `json:"keep"`
+	Call
 }
 
 // Compact asks Jev which of the results are still needed. A result is dropped
@@ -50,16 +46,12 @@ func Compact(ctx context.Context, c *jev.Client, s CompactState) CompactDecision
 		qs[fmt.Sprintf("needed_%d", i)] = jev.Noul(fmt.Sprintf(
 			"Will the coding agent still need the content of `results[%d]` to finish `task`, given `recent_steps`?", i))
 	}
-	start := time.Now()
-	res, err := c.Ask(ctx, s, qs)
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Error = err.Error()
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, qs); !ok {
 		return d
 	}
-	d.Answers, d.InputTokens = res.Answers, res.Usage.InputTokens
 	for i := range s.Results {
-		d.Keep[i] = res.Answers[fmt.Sprintf("needed_%d", i)].Noul >= 0.3
+		d.Keep[i] = d.Answers[fmt.Sprintf("needed_%d", i)].Noul >= 0.3
 	}
 	return d
 }

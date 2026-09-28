@@ -48,15 +48,15 @@ func NeedToRead(ctx context.Context, c *jev.Client, request string, files []File
 				return
 			}
 			defer func() { <-sem }()
-			res, err := c.Ask(ctx, map[string]any{"task": request, "file": f}, needToRead)
+			call, ok := ask(ctx, c, map[string]any{"task": request, "file": f}, needToRead)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
+			if !ok {
 				p.Failed++
 				return
 			}
-			p.Scores[f.Path] = res.Answers["need"].Noul
-			p.InputTokens += res.Usage.InputTokens
+			p.Scores[f.Path] = call.Answers["need"].Noul
+			p.InputTokens += call.InputTokens
 		})
 	}
 	wg.Wait()

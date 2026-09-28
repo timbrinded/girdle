@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
-	"unicode/utf8"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // A regression test proves a fix only if it fails without the fix. apply
@@ -107,30 +107,15 @@ func (t toolset) reproduce(ctx context.Context, cmd string) (note string, weak b
 	if len(paths) == 0 {
 		return "[Girdle] reproduce not run: this request changed no code, only tests.", false
 	}
-	var (
-		out  string
-		code int
-		ok   bool
-	)
-	t.withOriginals(paths, func() { out, code, ok = t.runCheck(ctx, cmd) })
+	var run shellRun
+	t.withOriginals(paths, func() { run = t.check(ctx, cmd) })
 	switch {
-	case !ok:
-		return "[Girdle] reproduce could not be run: " + clipTail(out, 400), false
-	case code == 0:
-		return "[Girdle] Your reproduce command also passes WITHOUT your fix, so it doesn't reproduce the bug. Change the test so it fails on the old code and passes on the new one, then apply again.\n" + clipTail(out, 800), true
+	case run.refused:
+		// A command that never ran shows nothing either way.
+		return "[Girdle] reproduce could not be run: " + clip.Tail(run.out, 400), false
+	case run.code == 0:
+		return "[Girdle] Your reproduce command also passes WITHOUT your fix, so it doesn't reproduce the bug. Change the test so it fails on the old code and passes on the new one, then apply again.\n" + clip.Tail(run.text(), 800), true
 	default:
-		return fmt.Sprintf("[Girdle] Without your fix, the reproduce command fails (exit code %d); with it, the check passes. The test reproduces the bug.", code), false
+		return fmt.Sprintf("[Girdle] Without your fix, the reproduce command fails (exit code %d); with it, the check passes. The test reproduces the bug.", run.code), false
 	}
-}
-
-func clipTail(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	cut := len(s) - n
-	for cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut++
-	}
-	return "…" + s[cut:]
 }

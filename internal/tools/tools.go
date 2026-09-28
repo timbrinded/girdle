@@ -17,9 +17,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"charm.land/fantasy"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 const (
@@ -252,7 +253,7 @@ func (t toolset) bash(ctx context.Context, in bashInput, _ fantasy.ToolCall) (fa
 	}
 	if t.grepCtx && r.code == 0 && grepCommand.MatchString(in.Command) {
 		if note := t.aroundMatches(r.out); note != "" {
-			r.out = strings.TrimRight(r.out, "\n") + "\n\n" + note
+			r.note(note)
 		}
 	}
 	return fantasy.NewTextResponse(r.text()), nil
@@ -269,6 +270,11 @@ type shellRun struct {
 // on its own line.
 func (r shellRun) text() string {
 	return fmt.Sprintf("%s\n%s%d]", strings.TrimRight(r.out, "\n"), exitTrailer, r.code)
+}
+
+// note adds a Girdle note after the output, before the exit-code line.
+func (r *shellRun) note(s string) {
+	r.out = strings.TrimRight(r.out, "\n") + "\n\n" + s
 }
 
 func (t toolset) shell(ctx context.Context, command string, timeout time.Duration) shellRun {
@@ -303,7 +309,7 @@ func (t toolset) shell(ctx context.Context, command string, timeout time.Duratio
 	} else if err != nil {
 		r.code = -1
 	}
-	r.out = clip(out.String())
+	r.out = clipOutput(out.String())
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		r.out += fmt.Sprintf("\n[timed out after %s]", timeout)
@@ -329,22 +335,14 @@ func ExitCode(result string) (int, bool) {
 	return code, err == nil
 }
 
-// clip keeps the head and tail of long output, where errors usually are. It
-// returns valid UTF-8, cutting only on character boundaries.
-func clip(s string) string {
-	s = strings.ToValidUTF8(s, "\uFFFD")
-	if len(s) <= maxOutputBytes {
-		return s
+// clipOutput keeps the head and tail of long output, where errors usually
+// are.
+func clipOutput(s string) string {
+	start, end, omitted := clip.Split(s, maxOutputBytes, maxOutputBytes/4)
+	if omitted == 0 {
+		return start
 	}
-	head := maxOutputBytes / 4
-	for head > 0 && !utf8.RuneStart(s[head]) {
-		head--
-	}
-	tail := len(s) - maxOutputBytes*3/4
-	for tail < len(s) && !utf8.RuneStart(s[tail]) {
-		tail++
-	}
-	return s[:head] + fmt.Sprintf("\n[... %d bytes omitted ...]\n", tail-head) + s[tail:]
+	return start + fmt.Sprintf("\n[... %d bytes omitted ...]\n", omitted) + end
 }
 
 // replaceIgnoringWhitespace replaces old with new in content, matching whole

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/clip"
 	"github.com/timbrinded/girdle/internal/tools"
 )
 
@@ -339,7 +340,7 @@ func outline(data []byte) string {
 			n++
 		}
 	}
-	return clipMiddle(b.String(), outlineMax)
+	return clip.Middle(b.String(), outlineMax)
 }
 
 // prefetch asks pick which of the files not yet shown the request needs,

@@ -6,25 +6,19 @@ package kernel
 import (
 	"cmp"
 	"context"
-	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 	"uuid"
 
 	"charm.land/fantasy"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/clip"
 	"github.com/timbrinded/girdle/internal/jev"
 	"github.com/timbrinded/girdle/internal/race"
 	"github.com/timbrinded/girdle/internal/tools"
@@ -39,86 +33,6 @@ const (
 	OutcomeError     Outcome = "error"
 	OutcomeCancelled Outcome = "cancelled"
 )
-
-// Config wires a session together.
-type Config struct {
-	Model           fantasy.LanguageModel
-	ModelName       string
-	ProviderOptions fantasy.ProviderOptions
-	Jev             *jev.Client
-	Dir             string
-	Policy          checkpoint.Policy
-	// Checkpoints turns the Jev turn-end checkpoint on. When false, every
-	// turn end stops the run, as in a plain agent loop.
-	Checkpoints bool
-	// Route asks Jev how hard each request is and sets the reasoning effort.
-	Route       bool
-	RoutePolicy checkpoint.RoutePolicy
-	// EffortOptions builds provider options for a reasoning effort. Required
-	// when Route is on.
-	EffortOptions   func(checkpoint.Effort) fantasy.ProviderOptions
-	MaxStepsPerTurn int
-	Emit            func(Event)
-	Log             *Log
-
-	// Snapshot sends the repository's files with each request, so the LLM
-	// doesn't spend steps listing and reading them.
-	Snapshot       bool
-	SnapshotBudget int
-	// Prefetch asks Jev, for a repository too large to snapshot whole,
-	// which other files the request needs, and adds them. It needs Snapshot.
-	Prefetch bool
-	// Batch asks the LLM to make all its edits and run the checks in one
-	// step, since every extra step costs seconds of latency.
-	Batch bool
-	// EarlyStop asks Jev, after any step whose last command succeeded,
-	// whether the task is already done, and ends the run there if so.
-	// It needs Checkpoints.
-	EarlyStop  bool
-	StepPolicy checkpoint.StepPolicy
-	// Race sends each LLM call this many times and keeps the first complete
-	// answer. Below 2, calls are not raced. The first call of a request
-	// starts every copy at once; later calls start an extra copy only after
-	// waiting Hedge for an answer, so quick steps cost one call. A zero
-	// Hedge starts every copy at once for every call.
-	Race  int
-	Hedge time.Duration
-	// Speculate starts a request's first LLM call on the usual effort while
-	// Jev routes it, instead of waiting for the route. It needs Route.
-	Speculate bool
-	// CrossCheck writes an independent test of each request in the
-	// background and runs it once the agent's own check passes. It needs
-	// Batch and EarlyStop.
-	CrossCheck bool
-	// Heartbeat asks Jev every few steps whether the turn is looping or
-	// drifting, and nudges it if so. It needs Checkpoints.
-	Heartbeat       bool
-	HeartbeatPolicy checkpoint.HeartbeatPolicy
-	// Compact prunes older tool output that Jev judges no longer needed,
-	// every CompactPolicy.Every steps. It needs Checkpoints.
-	Compact       bool
-	CompactPolicy checkpoint.CompactPolicy
-	// Reproduce lets apply check that a bug fix's regression test fails
-	// without the fix. It needs Batch.
-	Reproduce bool
-	// Leftovers asks Jev which names and files the request wants gone, and
-	// before the run stops, checks that none of them remain.
-	Leftovers bool
-	// Tripwire checks every shell command before it runs and blocks the
-	// catastrophic ones, handing the run back to the user.
-	Tripwire       bool
-	TripwirePolicy checkpoint.TripwirePolicy
-	// OfflineTools runs shell commands without outside network access
-	// (macOS only), so a benchmark agent can't fetch the fix it's tested on.
-	OfflineTools bool
-	// DenyRead lists path prefixes the tools may not read outside the
-	// working directory, such as other copies of a benchmark's code under
-	// test.
-	DenyRead []*regexp.Regexp
-	// GrepContext adds to search results the definitions the matches are
-	// in, and shows them when there are few.
-	GrepContext bool
-}
 
 // Session is one conversation in one working directory.
 type Session struct {
@@ -144,9 +58,8 @@ type Session struct {
 	called atomic.Bool
 	// cross delivers this request's cross-check, until it has run.
 	cross chan *crossCheck
-	// pending is a message waiting to go to the LLM once the kernel has
-	// stopped its turn: a failed cross-check or a heartbeat nudge.
-	pending, pendingWhy string
+	// halt is why the kernel stopped the LLM's turn, if it did.
+	halt halt
 	// steps and heartbeat nudges in this request.
 	requestSteps, beats int
 	// task is the current request, as the user wrote it.
@@ -164,8 +77,6 @@ type Session struct {
 	// check's output, for the step-end fan-out.
 	changeLog []string
 	lastOut   string
-	// tripped is why the tripwire blocked a command in this request.
-	tripped string
 	// intent delivers what the request wants gone; leftoverNudges counts
 	// the times it was found still there.
 	intent         chan checkpoint.Intent
@@ -173,11 +84,35 @@ type Session struct {
 	leftoverNudges int
 }
 
+// A halt is the kernel stopping the LLM's turn from outside, to say
+// something to it or to hand the run to the user.
+type halt struct {
+	kind   haltKind
+	text   string // haltNudge: the message for the LLM
+	reason string // for the log, and the run's end reason with haltUser
+}
+
+// haltKind orders halts by how serious they are: when two arrive in one
+// step, such as a blocked command during a failing cross-check, the more
+// serious one wins.
+type haltKind int
+
+const (
+	noHalt    haltKind = iota
+	haltNudge          // send text to the LLM and carry on
+	haltUser           // hand the run to the user
+)
+
+// stopTurn asks the kernel to end the LLM's turn for h.
+func (s *Session) stopTurn(h halt) {
+	if h.kind > s.halt.kind {
+		s.halt = h
+	}
+}
+
 // NewSession builds a session with the four built-in tools.
 func NewSession(cfg Config) *Session {
-	if cfg.MaxStepsPerTurn == 0 {
-		cfg.MaxStepsPerTurn = 60
-	}
+	cfg = cfg.resolved()
 	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
 	if cfg.Batch {
 		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
@@ -257,7 +192,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	var wg sync.WaitGroup
 	if s.cfg.Snapshot {
 		var pick Picker
-		if s.cfg.Prefetch && s.cfg.Jev != nil {
+		if s.cfg.Prefetch {
 			pick = func(ctx context.Context, request string, files []checkpoint.FileOutline) checkpoint.Prefetch {
 				ctx, cancel := context.WithTimeout(ctx, prefetchWait)
 				defer cancel()
@@ -268,7 +203,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
-	if s.routingOn() && s.cfg.Speculate {
+	if s.cfg.Speculate {
 		// The goroutine gets its own copy of the channel: the first LLM call
 		// takes s.routing and clears it, possibly before the goroutine runs.
 		routing := make(chan checkpoint.RouteDecision, 1)
@@ -294,7 +229,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		msg = snap.Text + "\n\n" + prompt
 	}
 	s.history = append(s.history, fantasy.NewUserMessage(msg))
-	if s.cfg.Leftovers && s.cfg.Jev != nil {
+	if s.cfg.Leftovers {
 		intent := make(chan checkpoint.Intent, 1)
 		s.intent = intent
 		files, names := NamedCode(prompt, func(p string) bool {
@@ -304,7 +239,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 		go func() { intent <- checkpoint.AskIntent(ctx, s.cfg.Jev, prompt, names, files) }()
 	}
 	s.cross = nil
-	if s.crossCheckOn() {
+	if s.cfg.CrossCheck {
 		s.startCrossCheck(ctx)
 	}
 	return s.loop(ctx, prompt, true)
@@ -321,7 +256,7 @@ func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
 	s.testsEdited, s.testsAsked = false, 0
 	s.changeLog, s.lastOut = nil, ""
-	s.tripped = ""
+	s.halt = halt{}
 	s.intent, s.gone, s.leftoverNudges = nil, nil, 0
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
@@ -330,13 +265,9 @@ func (s *Session) resetFacts() {
 // route asks Jev how hard the request is and sets this run's reasoning effort.
 func (s *Session) route(ctx context.Context, request string) {
 	s.callOptions = nil
-	if s.routingOn() {
+	if s.cfg.Route {
 		s.applyRoute(s.routeDecision(ctx, request))
 	}
-}
-
-func (s *Session) routingOn() bool {
-	return s.cfg.Route && s.cfg.Jev != nil && s.cfg.EffortOptions != nil
 }
 
 func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.RouteDecision {
@@ -364,31 +295,22 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 				s.emit(Event{Type: EventError, Text: err.Error()})
 				return s.end(OutcomeError, err.Error())
 			}
-			if why := s.tripped; why != "" {
-				s.tripped = ""
-				return s.end(OutcomeNeedsUser, "tripwire: "+why)
-			}
-			if early {
+			h := s.halt
+			s.halt = halt{}
+			switch {
+			case h.kind == haltUser:
+				return s.end(OutcomeNeedsUser, h.reason)
+			case early:
 				return s.finishEarly()
-			}
-			if msg := s.pending; msg != "" {
-				// The kernel stopped the turn to say something: a failed
-				// cross-check, or a heartbeat nudge.
-				s.pending = ""
-				s.emit(Event{Type: EventNudge, Text: msg, Reason: s.pendingWhy})
-				s.history = append(s.history, fantasy.NewUserMessage(msg))
+			case h.kind == haltNudge:
+				s.nudge(h.text, h.reason)
 				continue
-			}
-			if s.pendingWhy == "blocked" {
-				s.pendingWhy = ""
-				return s.end(OutcomeNeedsUser, "blocked")
 			}
 			lastText = text
 			// A turn that ends by itself is checked for leftovers too.
 			if len(s.edited) > 0 {
 				if fb := s.leftovers(ctx); fb != "" {
-					s.emit(Event{Type: EventNudge, Text: fb, Reason: "leftovers"})
-					s.history = append(s.history, fantasy.NewUserMessage(fb))
+					s.nudge(fb, "leftovers")
 					continue
 				}
 			}
@@ -401,7 +323,7 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 		d := checkpoint.TurnEnd(ctx, s.cfg.Jev, checkpoint.TurnState{
 			Task:                 task,
 			Requirements:         requirements,
-			LastAssistantMessage: clipMiddle(lastText, 2000),
+			LastAssistantMessage: clip.Middle(lastText, 2000),
 			RecentSteps:          lastN(s.steps, 8),
 		}, s.cfg.Policy, nudges)
 		s.addUsage(Usage{JevTokens: d.InputTokens})
@@ -412,12 +334,17 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 			return s.end(OutcomeDone, d.Rule)
 		case checkpoint.Nudge:
 			nudges[d.Rule]++
-			s.emit(Event{Type: EventNudge, Text: d.Nudge, Reason: d.Rule})
-			s.history = append(s.history, fantasy.NewUserMessage(d.Nudge))
+			s.nudge(d.Nudge, d.Rule)
 		default:
 			return s.end(OutcomeNeedsUser, d.Rule)
 		}
 	}
+}
+
+// nudge sends the LLM a message from the kernel before its next turn.
+func (s *Session) nudge(text, reason string) {
+	s.emit(Event{Type: EventNudge, Text: text, Reason: reason})
+	s.history = append(s.history, fantasy.NewUserMessage(text))
 }
 
 // turn runs the LLM until it stops calling tools, and returns its final text.
@@ -428,10 +355,10 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 
 	stopWhen := []fantasy.StopCondition{
 		fantasy.StepCountIs(s.cfg.MaxStepsPerTurn),
-		// A blocked command hands the run back to the user at once.
-		func([]fantasy.StepResult) bool { return s.tripped != "" },
+		// A halt, such as a blocked command, ends the turn at once.
+		func([]fantasy.StepResult) bool { return s.halt.kind != noHalt },
 	}
-	if s.cfg.Heartbeat && s.cfg.Checkpoints && s.cfg.Jev != nil {
+	if s.cfg.Heartbeat {
 		stopWhen = append(stopWhen, func(steps []fantasy.StepResult) bool {
 			if len(steps[len(steps)-1].Content.ToolCalls()) == 0 {
 				return false
@@ -439,7 +366,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			return s.heartbeat(ctx, task, requirements)
 		})
 	}
-	if s.earlyStopOn() {
+	if s.cfg.EarlyStop {
 		stopWhen = append(stopWhen, func(steps []fantasy.StepResult) bool {
 			last := steps[len(steps)-1]
 			// A step without tool calls ends the turn anyway, and the turn-end
@@ -451,13 +378,13 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			// the agent's own check just passed.
 			if s.cross != nil && s.lastOK && len(s.edited) > 0 {
 				if fb := s.runCrossCheck(ctx); fb != "" {
-					s.pending, s.pendingWhy = fb, "crosscheck"
+					s.stopTurn(halt{kind: haltNudge, text: fb, reason: "crosscheck"})
 					return true
 				}
 			}
 			if s.lastOK && len(s.edited) > 0 {
 				if fb := s.leftovers(ctx); fb != "" {
-					s.pending, s.pendingWhy = fb, "leftovers"
+					s.stopTurn(halt{kind: haltNudge, text: fb, reason: "leftovers"})
 					return true
 				}
 			}
@@ -473,7 +400,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 		}
 	}
 	var prepare fantasy.PrepareStepFunction
-	if s.cfg.Compact && s.cfg.Checkpoints && s.cfg.Jev != nil {
+	if s.cfg.Compact {
 		prepare = s.compactPrepare(task)
 	}
 	res, err := s.agent.Stream(ctx, fantasy.AgentStreamCall{
@@ -515,7 +442,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 		},
 		OnToolResult: func(tr fantasy.ToolResultContent) error {
 			text, isErr := outputText(tr.Result)
-			s.emit(Event{Type: EventToolResult, Tool: tr.ToolName, CallID: tr.ToolCallID, Text: clipMiddle(text, 4000), IsError: isErr})
+			s.emit(Event{Type: EventToolResult, Tool: tr.ToolName, CallID: tr.ToolCallID, Text: clip.Middle(text, 4000), IsError: isErr})
 			s.steps = append(s.steps, summarizeStep(calls[tr.ToolCallID], text))
 			s.noteResult(calls[tr.ToolCallID], text, isErr)
 			return nil
@@ -525,7 +452,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			// summary. It is logged for reading traces. Sending it to Jev
 			// changed no decision (decision 0011).
 			if r := strings.TrimSpace(sr.Content.ReasoningText()); r != "" {
-				s.emit(Event{Type: EventReasoning, Text: clipMiddle(r, 2000)})
+				s.emit(Event{Type: EventReasoning, Text: clip.Middle(r, 2000)})
 			}
 			if t := strings.TrimSpace(sr.Content.Text()); t != "" {
 				s.emit(Event{Type: EventAssistantText, Text: t})
@@ -620,100 +547,6 @@ func (s *Session) noteRace(r race.Result) {
 	}})
 }
 
-// heartbeat asks Jev every few steps of a request whether the work is
-// looping, drifting or blocked, and stops the turn to act on it.
-func (s *Session) heartbeat(ctx context.Context, task string, requirements []string) bool {
-	s.requestSteps++
-	p := s.cfg.HeartbeatPolicy
-	if p.Every <= 0 || s.requestSteps%p.Every != 0 || s.beats >= p.MaxNudges {
-		return false
-	}
-	d := checkpoint.Heartbeat(ctx, s.cfg.Jev, checkpoint.TurnState{
-		Task: task, Requirements: requirements, RecentSteps: lastN(s.steps, p.Every+2),
-	}, p)
-	s.addUsage(Usage{JevTokens: d.InputTokens})
-	s.emit(Event{Type: EventHeartbeat, Heartbeat: &d})
-	switch d.Action {
-	case checkpoint.Nudge:
-		s.beats++
-		s.pending, s.pendingWhy = d.Nudge, d.Rule
-		return true
-	case checkpoint.Ask:
-		s.pendingWhy = "blocked"
-		return true
-	}
-	return false
-}
-
-func (s *Session) earlyStopOn() bool {
-	return s.cfg.EarlyStop && s.cfg.Checkpoints && s.cfg.Jev != nil
-}
-
-// stepEnd asks Jev whether the tool results so far show the task done. Facts
-// come first: only a request that changed files, whose latest tool result is
-// a check that exited 0, is worth asking about.
-func (s *Session) stepEnd(ctx context.Context, task string, requirements []string, text string) bool {
-	if !s.lastOK || len(s.edited) == 0 {
-		return false
-	}
-	// A fact the threshold can't see: the request asks for tests and none
-	// have been written yet. Jev's coverage answers miss this.
-	if s.testsAsked >= 0.5 && !s.testsEdited {
-		return false
-	}
-	state := checkpoint.TurnState{
-		Task:                 task,
-		Requirements:         requirements,
-		LastAssistantMessage: clipMiddle(text, 2000),
-		RecentSteps:          lastN(s.steps, 12),
-	}
-	if s.cfg.StepPolicy.Fanout {
-		state.Changes = lastN(s.changeLog, 12)
-		state.FilesChanged = slices.Sorted(maps.Keys(s.edited))
-		for _, p := range state.FilesChanged {
-			if tools.IsTestFile(p) {
-				state.TestsChanged = append(state.TestsChanged, p)
-			}
-		}
-		state.Check, state.CheckOutput = s.lastCmd, clipMiddle(s.lastOut, 3500)
-	}
-	d := checkpoint.StepEnd(ctx, s.cfg.Jev, state, s.cfg.StepPolicy)
-	s.addUsage(Usage{JevTokens: d.InputTokens})
-	s.emit(Event{Type: EventDecision, Decision: &d})
-	return d.Action == checkpoint.Stop
-}
-
-// finishEarly ends a request that the step-end checkpoint found done.
-func (s *Session) finishEarly() (Outcome, string) {
-	summary := s.earlySummary()
-	s.emit(Event{Type: EventAssistantText, Text: summary})
-	s.history = append(s.history, fantasy.Message{Role: fantasy.MessageRoleAssistant,
-		Content: []fantasy.MessagePart{fantasy.TextPart{Text: summary}}})
-	return s.end(OutcomeDone, "done_early")
-}
-
-// earlySummary is the reply for a run the step-end checkpoint ended. It is
-// built from facts, so no LLM step is spent writing it.
-func (s *Session) earlySummary() string {
-	var b strings.Builder
-	b.WriteString("Done. The tool results show the task complete, so Girdle stopped here.\n")
-	fmt.Fprintf(&b, "Changed: %s", strings.Join(slices.Sorted(maps.Keys(s.edited)), ", "))
-	if s.lastCmd != "" {
-		fmt.Fprintf(&b, "\nChecked with: %s (exit code 0)", clipMiddle(oneLine(s.lastCmd), 200))
-	}
-	return b.String()
-}
-
-// inputField reads one string field from a tool call's JSON input.
-func inputField(input, name string) string {
-	var m map[string]any
-	if json.Unmarshal([]byte(input), &m) != nil {
-		return ""
-	}
-	v, _ := m[name].(string)
-	return v
-}
-
 func (s *Session) end(o Outcome, reason string) (Outcome, string) {
 	u := s.Usage()
 	s.emit(Event{Type: EventRunEnd, Outcome: o, Reason: reason, Usage: &u})
@@ -736,137 +569,11 @@ func (s *Session) emit(e Event) {
 	}
 }
 
-// commonTools are the commands whose presence is worth telling the model
-// about, so it doesn't waste a step guessing (for example python vs python3).
-var commonTools = []string{"git", "go", "python3", "python", "node", "npm", "bun", "cargo", "java", "ruby", "make"}
-
-func availableTools() string {
-	var found []string
-	for _, t := range commonTools {
-		if _, err := exec.LookPath(t); err == nil {
-			found = append(found, t)
-		}
-	}
-	if len(found) == 0 {
-		return "none detected"
-	}
-	return strings.Join(found, ", ")
-}
-
-func systemPrompt(cfg Config) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, `You are Girdle, a coding agent working in the repository at %s (%s/%s). Today is %s. Commands available on PATH: %s.
-
-Use the tools to read and change files and to run commands. Work until the task is completely done: make the change, then verify it by building and running the relevant tests, and fix anything that fails.
-
-When you finish, reply briefly with what you changed and the evidence that it works. Only ask the user a question when you need a decision that only they can make.`,
-		cfg.Dir, runtime.GOOS, runtime.GOARCH, time.Now().Format("2 January 2006"), availableTools())
-	if cfg.Snapshot {
-		b.WriteString(`
-
-Each request starts with a repository snapshot, taken just before the request. For a small repository it holds the full text of every file: work from it, and don't read those files again. For a large one it lists every file, includes the repository's instructions for agents, and already shows the code the request names: its files or definitions, its uses and the tests beside it. Don't look those up again.`)
-	}
-	if cfg.Batch {
-		b.WriteString(`
-
-Every response you send costs the user several seconds, so finish in as few as you can. Work in at most three moves: gather, change, and only if needed fix.
-- Gather: if the snapshot isn't enough, make one lookup call with every file, line range, definition and search you will need. Ask generously rather than coming back for more.
-- Change: make one apply call with every edit and new file the task needs, and set its check to a command that proves the whole task is done. That means building the code and running the tests, plus a quick check for any part of the task the tests can't show, such as grep confirming a renamed name is gone everywhere, comments included. When the task reports a bug, put a test that reproduces it in the same apply as the fix, so the check shows it fixed.`)
-		if cfg.Reproduce {
-			b.WriteString(` Set reproduce to a command that runs only that test: Girdle runs it once without your fix to show it fails there.`)
-		}
-		// This once listed examples taken from a benchmark task's hidden
-		// test. They were removed at no cost (decision 0016).
-		b.WriteString(` Before you write, work out the edge cases the task's words imply, and make the code handle them and the tests cover them: one attempt has to be right. apply runs the check straight after the changes, so one response both changes and verifies the code.
-- Fix: if the check fails, send one more apply with the fixes. Start its check with a quick run of just what failed, joined to the full proof with &&, so a repeat failure shows in seconds.
-The check must fail when anything is wrong, so never hide its exit code with "; echo" or "|| true". Keep any text to a sentence.
-
-Writing takes time too, so write as little as the task allows. Change existing files with old_text and new_text edits, each old_text short but unique; use content only for new files or files you are mostly rewriting. Changes apply in order, so never let two changes touch the same lines: merge them into one. Keep new tests compact: one focused test per behaviour.`)
-	}
-	return b.String()
-}
-
-// outputText is a tool result's text, and whether the tool reported an
-// error.
-func outputText(o fantasy.ToolResultOutputContent) (string, bool) {
-	if t, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](o); ok {
-		return t.Text, false
-	}
-	if e, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](o); ok && e.Error != nil {
-		return e.Error.Error(), true
-	}
-	return "", false
-}
-
-// summarizeStep is the one-line view of a tool call that Jev sees. It keeps
-// mostly the end of the output, where test and build results appear: an
-// earlier version kept too little and Jev missed passing tests.
-func summarizeStep(call fantasy.ToolCallContent, result string) string {
-	input := call.Input
-	if call.ToolName == "apply" {
-		// The input holds whole files; Jev needs only what changed and how
-		// it was checked.
-		if paths, check, ok := tools.ParseApply(input); ok {
-			input = "changes " + strings.Join(paths, ", ") + "; check: " + check
-		}
-	}
-	return fmt.Sprintf("%s %s -> %s", call.ToolName, clipMiddle(oneLine(input), 160), clipEnd(oneLine(result), 700))
-}
-
-// clipEnd is clipMiddle weighted towards the end of s.
-func clipEnd(s string, n int) string { return clipKeeping(s, n, n/5) }
-
-func lastAssistantText(msgs []fantasy.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role != fantasy.MessageRoleAssistant {
-			continue
-		}
-		var b strings.Builder
-		for _, p := range msgs[i].Content {
-			if t, ok := fantasy.AsMessagePart[fantasy.TextPart](p); ok {
-				b.WriteString(t.Text)
-			}
-		}
-		return b.String()
-	}
-	return ""
-}
-
 func jevModel(c *jev.Client) string {
 	if c == nil {
 		return ""
 	}
 	return c.Model
-}
-
-func lastN(s []string, n int) []string {
-	return s[max(0, len(s)-n):]
-}
-
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
-
-// clipMiddle keeps the start and end of s, where the useful parts usually
-// are.
-func clipMiddle(s string, n int) string { return clipKeeping(s, n, n/3) }
-
-// clipKeeping shortens s to about n bytes, keeping head bytes from the start
-// and the rest from the end. It always returns valid UTF-8: Jev and the event
-// log reject anything else, and tool output can be arbitrary bytes.
-func clipKeeping(s string, n, head int) string {
-	s = strings.ToValidUTF8(s, "\uFFFD")
-	if len(s) <= n {
-		return s
-	}
-	for head > 0 && !utf8.RuneStart(s[head]) {
-		head--
-	}
-	tail := len(s) - (n - head)
-	for tail < len(s) && !utf8.RuneStart(s[tail]) {
-		tail++
-	}
-	return s[:head] + " … " + s[tail:]
 }
 
 const (
@@ -875,106 +582,3 @@ const (
 	prefetchWait    = 4 * time.Second
 	prefetchWorkers = 32
 )
-
-// renderChange shows one change the way a diff would, clipped.
-func renderChange(c tools.Change) string {
-	if c.OldText != "" {
-		return "edit " + c.Path + "\n- " + strings.ReplaceAll(clipMiddle(c.OldText, 600), "\n", "\n- ") +
-			"\n+ " + strings.ReplaceAll(clipMiddle(c.NewText, 1500), "\n", "\n+ ")
-	}
-	return "write " + c.Path + "\n" + clipMiddle(c.Content, 2500)
-}
-
-// toolOptions are how the session's tools run shell commands: through the
-// tripwire when it's on, and offline when the config says so.
-func (s *Session) toolOptions() tools.Options {
-	o := tools.Options{Offline: s.cfg.OfflineTools, DenyRead: s.cfg.DenyRead, GrepContext: s.cfg.GrepContext}
-	if s.cfg.Tripwire {
-		o.Guard = s.guard
-	}
-	return o
-}
-
-// guard is the tripwire: it reads a command's facts, blocks what the hard
-// floor forbids, runs at once what shows no deleting, pushing or sending,
-// and asks Jev about the rest. A block ends the turn and hands the run to
-// the user (decision 0014).
-func (s *Session) guard(ctx context.Context, command string) string {
-	home, _ := os.UserHomeDir()
-	state := checkpoint.TripwireState{Command: clipMiddle(command, 4000), ProjectDir: s.cfg.Dir, HomeDir: home,
-		TempDirs: tools.TempDirs(), Task: clipMiddle(s.task, 2000)}
-	f, err := tools.ReadShell(ctx, command, s.cfg.Dir, home)
-	if err == nil {
-		state.Facts = f
-		state.DeletesResolved = len(f.DeletesOutside)+len(f.DeletesUnknown)+len(f.InlineEffects)+len(f.Destroys) == 0
-		if why := f.Floor(); why != "" {
-			d := checkpoint.TripwireDecision{Action: "block", Rule: "floor", Why: why, State: state}
-			s.emit(Event{Type: EventTripwire, Tripwire: &d})
-			s.tripped = why
-			return why
-		}
-		if !f.NeedsJudgement() {
-			return ""
-		}
-	}
-	// Without the parse (no ast-grep), every command is judged.
-	d := checkpoint.Tripwire(ctx, s.cfg.Jev, state, s.cfg.TripwirePolicy)
-	s.addUsage(Usage{JevTokens: d.InputTokens})
-	s.emit(Event{Type: EventTripwire, Tripwire: &d})
-	if d.Action == "block" {
-		s.tripped = d.Why
-		return d.Why
-	}
-	return ""
-}
-
-// maxLeftoverNudges bounds how often one request is sent back for
-// leftovers, so a disagreement can't loop.
-const maxLeftoverNudges = 2
-
-// leftovers returns a nudge when a name the request wants gone still
-// appears where it must change, or a file it wants pruned still defines
-// functions nothing uses. It returns "" when there's nothing to say.
-func (s *Session) leftovers(ctx context.Context) string {
-	if s.intent == nil || s.leftoverNudges >= maxLeftoverNudges {
-		return ""
-	}
-	if s.gone == nil {
-		select {
-		case in := <-s.intent:
-			s.gone = &in
-			s.addUsage(Usage{JevTokens: in.Tokens})
-			s.emit(Event{Type: EventLeftovers, Reason: "intent", Meta: map[string]string{
-				"gone": strings.Join(in.Gone, ","), "prune": strings.Join(in.Prune, ","), "latency_ms": fmt.Sprint(in.LatencyMS),
-			}})
-		case <-ctx.Done():
-			return ""
-		}
-	}
-	var b strings.Builder
-	var found []string
-	for _, n := range s.gone.Gone {
-		mentions := tools.Mentions(ctx, s.cfg.Dir, n, 20)
-		if len(mentions) == 0 {
-			continue
-		}
-		must, tokens := checkpoint.MustChange(ctx, s.cfg.Jev, s.task, n, mentions)
-		s.addUsage(Usage{JevTokens: tokens})
-		if len(must) > 0 {
-			fmt.Fprintf(&b, "`%s` still appears where the task wants it gone:\n%s\n", n, strings.Join(must, "\n"))
-			found = append(found, n)
-		}
-	}
-	for _, f := range s.gone.Prune {
-		if unused := tools.UnusedDefs(ctx, s.cfg.Dir, f); len(unused) > 0 {
-			fmt.Fprintf(&b, "%s still defines functions that no code uses: %s\n", f, strings.Join(unused, ", "))
-			found = append(found, f)
-		}
-	}
-	if b.Len() == 0 {
-		return ""
-	}
-	s.leftoverNudges++
-	s.emit(Event{Type: EventLeftovers, Reason: "found", Meta: map[string]string{"found": strings.Join(found, ",")}})
-	return "[Girdle] Not done yet.\n" + b.String() + "Change these, then run the check again."
-}

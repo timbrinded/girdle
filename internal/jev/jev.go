@@ -16,6 +16,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 // DefaultModel is pinned so thresholds stay valid until we re-tune them.
@@ -178,7 +180,7 @@ func (c *Client) do(ctx context.Context, body []byte) (*Response, time.Duration,
 		if s, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil {
 			wait = time.Duration(s) * time.Second
 		}
-		return nil, wait, &StatusError{Code: res.StatusCode, Body: truncate(string(raw), 300)}
+		return nil, wait, &StatusError{Code: res.StatusCode, Body: clip.Head(string(raw), 300)}
 	}
 	var out Response
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -189,11 +191,4 @@ func (c *Client) do(ctx context.Context, body []byte) (*Response, time.Duration,
 
 func retryable(code int) bool {
 	return code == http.StatusTooManyRequests || code == 529 || code >= 500
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

@@ -2,7 +2,6 @@ package checkpoint
 
 import (
 	"context"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -54,29 +53,21 @@ type RouteDecision struct {
 	Effort     Effort  `json:"effort"`
 	Score      float64 `json:"score"`
 	// Tests is Jev's noul for "the request asks for tests".
-	Tests       float64               `json:"tests,omitzero"`
-	State       RouteState            `json:"state"`
-	Answers     map[string]jev.Answer `json:"answers,omitempty"`
-	JevModel    string                `json:"jev_model,omitempty"`
-	LatencyMS   int64                 `json:"latency_ms"`
-	InputTokens int64                 `json:"input_tokens,omitzero"`
-	Error       string                `json:"error,omitempty"`
+	Tests float64    `json:"tests,omitzero"`
+	State RouteState `json:"state"`
+	Call
 }
 
 // Route picks the reasoning effort for a request. If Jev is unreachable it
 // falls back to medium.
 func Route(ctx context.Context, c *jev.Client, s RouteState, p RoutePolicy) RouteDecision {
 	d := RouteDecision{Checkpoint: "route", State: s, Effort: EffortMedium}
-	start := time.Now()
-	res, err := c.Ask(ctx, s, RouteQuestions)
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Error = err.Error()
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, RouteQuestions); !ok {
 		return d
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
-	d.Score = res.Answers["complexity"].Score
-	d.Tests = res.Answers["tests"].Noul
+	d.Score = d.Answers["complexity"].Score
+	d.Tests = d.Answers["tests"].Noul
 	switch {
 	case d.Score < p.LowBelow:
 		d.Effort = EffortLow

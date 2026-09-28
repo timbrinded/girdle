@@ -23,6 +23,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
+	"github.com/timbrinded/girdle/internal/clip"
 	"github.com/timbrinded/girdle/internal/jev"
 	"github.com/timbrinded/girdle/internal/kernel"
 	"github.com/timbrinded/girdle/internal/tui"
@@ -120,10 +121,12 @@ func run() int {
 	}
 	cfg.Policy.MaxNudges = *maxNudges
 	cfg.MaxStepsPerTurn = *maxSteps
-	cfg.Route = !*noJev && !*noRoute
+	// Features whose prerequisites are off, such as Jev, are turned off by
+	// the kernel.
+	cfg.Route = !*noRoute
 	cfg.Snapshot = withFast("snapshot", *snapshot)
 	cfg.Batch = withFast("batch", *batch)
-	cfg.EarlyStop = !*noJev && withFast("early-stop", *earlyStop)
+	cfg.EarlyStop = withFast("early-stop", *earlyStop)
 	cfg.Race = *raceFlag
 	if cfg.Race == 0 {
 		cfg.Race = 1
@@ -131,21 +134,21 @@ func run() int {
 			cfg.Race = 3
 		}
 	}
-	cfg.Speculate = cfg.Route && withFast("speculate", *speculate)
-	cfg.CrossCheck = cfg.Batch && cfg.EarlyStop && withFast("crosscheck", *crossCheck)
-	cfg.Reproduce = cfg.Batch && withFast("reproduce", *reproduce)
-	cfg.Heartbeat = !*noJev && withFast("heartbeat", *heartbeat)
-	cfg.Prefetch = cfg.Snapshot && !*noJev && withFast("prefetch", *prefetch)
+	cfg.Speculate = withFast("speculate", *speculate)
+	cfg.CrossCheck = withFast("crosscheck", *crossCheck)
+	cfg.Reproduce = withFast("reproduce", *reproduce)
+	cfg.Heartbeat = withFast("heartbeat", *heartbeat)
+	cfg.Prefetch = withFast("prefetch", *prefetch)
 	if withFast("stepfan", *stepfan) {
 		cfg.StepPolicy = checkpoint.FanoutStepPolicy
 	}
-	cfg.Compact = !*noJev && *compact
+	cfg.Compact = *compact
 	cfg.CompactPolicy = checkpoint.DefaultCompactPolicy
 	cfg.Tripwire = *tripwire
 	cfg.OfflineTools = *offline
 	cfg.DenyRead = denyRead
 	cfg.GrepContext = withFast("grepctx", *grepCtx)
-	cfg.Leftovers = !*noJev && withFast("leftovers", *leftovers)
+	cfg.Leftovers = withFast("leftovers", *leftovers)
 	cfg.TripwirePolicy = checkpoint.DefaultTripwirePolicy
 	cfg.HeartbeatPolicy = checkpoint.DefaultHeartbeatPolicy
 	cfg.Hedge = *hedge
@@ -319,9 +322,9 @@ func headlessPrinter(asJSON bool) func(kernel.Event) {
 		case kernel.EventAssistantText:
 			fmt.Println()
 		case kernel.EventToolCall:
-			fmt.Printf("\n→ %s %s\n", e.Tool, clip(e.Input, 200))
+			fmt.Printf("\n→ %s %s\n", e.Tool, clip.Head(e.Input, 200))
 		case kernel.EventToolResult:
-			fmt.Printf("  %s\n", clip(strings.ReplaceAll(e.Text, "\n", " ⏎ "), 200))
+			fmt.Printf("  %s\n", clip.Head(strings.ReplaceAll(e.Text, "\n", " ⏎ "), 200))
 		case kernel.EventDecision:
 			d := e.Decision
 			fmt.Printf("◆ jev %s: %s (%s) %dms\n", d.Checkpoint, d.Action, d.Rule, d.LatencyMS)
@@ -365,13 +368,6 @@ func loadSeed(path string) (string, []fantasy.Message, error) {
 		}
 	}
 	return sf.Task, msgs, nil
-}
-
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 func fail(err error) int {

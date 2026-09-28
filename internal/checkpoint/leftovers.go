@@ -3,7 +3,6 @@ package checkpoint
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -20,17 +19,15 @@ type Intent struct {
 	// Gone are the names the request wants renamed, replaced or removed.
 	Gone []string
 	// Prune are the files whose unused code the request wants removed.
-	Prune     []string
-	Answers   map[string]jev.Answer
-	LatencyMS int64
-	Tokens    int64
+	Prune []string
+	Call
 }
 
 // AskIntent asks, for each name and file the request mentions, whether it
 // should be gone by the end. One request, one question per item.
 func AskIntent(ctx context.Context, c *jev.Client, task string, names, files []string) Intent {
 	var in Intent
-	if c == nil || len(names)+len(files) == 0 {
+	if len(names)+len(files) == 0 {
 		return in
 	}
 	qs := map[string]jev.Question{}
@@ -40,20 +37,17 @@ func AskIntent(ctx context.Context, c *jev.Client, task string, names, files []s
 	for i := range files {
 		qs[fmt.Sprintf("prune_%d", i)] = jev.Noul(fmt.Sprintf("Does `task` ask to remove the code in `files[%d]` that nothing else uses?", i))
 	}
-	start := time.Now()
-	res, err := c.Ask(ctx, map[string]any{"task": task, "names": names, "files": files}, qs)
-	in.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
+	var ok bool
+	if in.Call, ok = ask(ctx, c, map[string]any{"task": task, "names": names, "files": files}, qs); !ok {
 		return in
 	}
-	in.Answers, in.Tokens = res.Answers, res.Usage.InputTokens
 	for i, n := range names {
-		if res.Answers[fmt.Sprintf("gone_%d", i)].Noul >= 0.5 {
+		if in.Answers[fmt.Sprintf("gone_%d", i)].Noul >= 0.5 {
 			in.Gone = append(in.Gone, n)
 		}
 	}
 	for i, f := range files {
-		if res.Answers[fmt.Sprintf("prune_%d", i)].Noul >= 0.5 {
+		if in.Answers[fmt.Sprintf("prune_%d", i)].Noul >= 0.5 {
 			in.Prune = append(in.Prune, f)
 		}
 	}
@@ -64,22 +58,22 @@ func AskIntent(ctx context.Context, c *jev.Client, task string, names, files []s
 // needs it changed: a changelog line recording the rename, say, should stay.
 // It returns the mentions that must change.
 func MustChange(ctx context.Context, c *jev.Client, task, name string, mentions []string) ([]string, int64) {
-	if c == nil || len(mentions) == 0 {
+	if len(mentions) == 0 {
 		return mentions, 0
 	}
 	qs := map[string]jev.Question{}
 	for i := range mentions {
 		qs[fmt.Sprintf("m%d", i)] = jev.Noul(fmt.Sprintf("For `task` to be done, must `mentions[%d]` change so that it no longer says `name`?", i))
 	}
-	res, err := c.Ask(ctx, map[string]any{"task": task, "name": name, "mentions": mentions}, qs)
-	if err != nil {
+	call, ok := ask(ctx, c, map[string]any{"task": task, "name": name, "mentions": mentions}, qs)
+	if !ok {
 		return mentions, 0
 	}
 	var out []string
 	for i, m := range mentions {
-		if res.Answers[fmt.Sprintf("m%d", i)].Noul >= 0.5 {
+		if call.Answers[fmt.Sprintf("m%d", i)].Noul >= 0.5 {
 			out = append(out, m)
 		}
 	}
-	return out, res.Usage.InputTokens
+	return out, call.InputTokens
 }

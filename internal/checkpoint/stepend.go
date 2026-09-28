@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"time"
 
 	"github.com/timbrinded/girdle/internal/jev"
 )
@@ -82,23 +81,20 @@ func (p StepPolicy) Decide(a map[string]jev.Answer, requirements []string) (Acti
 // is unreachable the LLM simply carries on and the turn-end checkpoint
 // decides as usual.
 func StepEnd(ctx context.Context, c *jev.Client, s TurnState, p StepPolicy) Decision {
-	d := Decision{Checkpoint: "step_end", State: s}
-	start := time.Now()
 	qs := StepEndQuestions(s.Requirements)
 	if p.Fanout {
 		qs = StepFanQuestions(s.Requirements)
 	}
-	res, err := c.Ask(ctx, s, qs)
-	d.LatencyMS = time.Since(start).Milliseconds()
-	if err != nil {
-		d.Action, d.Rule, d.Error = Continue, "jev_unavailable", err.Error()
+	d := Decision{Checkpoint: "step_end", State: s}
+	var ok bool
+	if d.Call, ok = ask(ctx, c, s, qs); !ok {
+		d.Action, d.Rule = Continue, "jev_unavailable"
 		return d
 	}
-	d.Answers, d.JevModel, d.InputTokens = res.Answers, res.Model, res.Usage.InputTokens
 	if p.Fanout {
-		d.Action, d.Rule = p.decideFan(res.Answers)
+		d.Action, d.Rule = p.decideFan(d.Answers)
 	} else {
-		d.Action, d.Rule = p.Decide(res.Answers, s.Requirements)
+		d.Action, d.Rule = p.Decide(d.Answers, s.Requirements)
 	}
 	return d
 }

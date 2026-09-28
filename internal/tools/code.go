@@ -12,7 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/timbrinded/girdle/internal/clip"
 )
 
 const (
@@ -79,7 +80,7 @@ func Search(ctx context.Context, dir, pattern, glob string, ignoreCase bool) (st
 			b.WriteString("\n")
 		}
 		last = file
-		b.WriteString(file + ":" + clipLine(rest) + "\n")
+		b.WriteString(file + ":" + clip.Head(rest, maxLineWidth) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -234,17 +235,6 @@ func SourceFiles(ctx context.Context, dir string) []string {
 	})
 	slices.Sort(paths)
 	return paths
-}
-
-func clipLine(s string) string {
-	if len(s) <= maxLineWidth {
-		return s
-	}
-	cut := maxLineWidth
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + " …"
 }
 
 // leadingInt reads the number at the start of s, or 0.
