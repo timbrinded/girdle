@@ -72,4 +72,17 @@ Over 46 passing fast-flow runs:
 - **Why it works where `-wide` didn't.**
   - `-wide` put code in front of the model up front. It then took fewer steps and thought longer in each.
   - Grep context shows the definitions the agent asked about, at the moment it asks. That removes the read step and the re-planning that came with it.
-- **Held-out confirmation:** results to follow.
+- **Held-out confirmation: not confirmed.** The new build ran against the build before it, side by side, 2 runs per held-out task:
+
+  | Held-out | Before | With grep context |
+  |---|---|---|
+  | Time ratio (passing runs) | | 1.01 (0.87 to 1.20) |
+  | Passed | 39 of 44 | 39 of 44 |
+  | Tool calls per passing run | 12.4 | 12.3 |
+  | Median passing run | 53 s | 63 s |
+  | Cost per run | $0.0022 | $0.0022 |
+
+  - Grep context fired 2.1 times a run there, against 2.9 on development.
+  - But the held-out agents grepped far less, 3.2 bash greps a run against 8.1, and round trips didn't fall.
+  - Isolation held: one run's reads of the cached go-cmp release were all denied.
+- **Decision.** It stays in `-fast`. It helped on the search-heavy development tasks over three rounds, and it was neutral on the held-out set with no cost to passes or spend. The development gain did not carry over, so the claim is "fewer round trips where the agent searches a lot", not "13% faster". To be reviewed by the user.
