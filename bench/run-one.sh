@@ -73,14 +73,18 @@ fi
 prompt=$(cat "$tdir/task.md")
 
 # Other copies of the code under test would let an agent copy the fix: the
-# benchmark's clones of other commits, other runs' warm copies, and a
+# benchmark's clones of other commits, other runs' warm copies, the tasks'
+# own reference fixes and hidden tests, and a
 # released or vendored copy anywhere on disk: in the Go module cache, in
 # another project's vendor directory, in any site-packages or a vendored
 # _vendor. An agent read gjson's released feature from the module cache
 # (decision 0019). Girdle's tools may not read any path these patterns
 # match; the working copy stays open.
 rx() { printf %s "$1" | sed 's/[][\.^$*+?(){}|]/\\&/g'; }
-deny=(-deny-read "^$(rx "$root/bench/.cache")/" -deny-read "^$(rx "$root/bench/.warm")/")
+# The whole checkout is denied, not just the clones: every task's reference
+# fix (solution.patch) and hidden tests live in it. The working copy, under
+# bench/.warm in warm mode, stays open.
+deny=(-deny-read "^$(rx "$root")/")
 if [[ -f $work/go.mod ]]; then
   mod=$(awk '$1 == "module" {print $2; exit}' "$work/go.mod")
   # The module cache writes a capital as ! and the lower-case letter. A
