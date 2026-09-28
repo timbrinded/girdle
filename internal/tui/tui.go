@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -18,12 +19,13 @@ import (
 	"github.com/timbrinded/girdle/internal/tools"
 )
 
-// Run starts the TUI and blocks until the user quits.
-func Run(ctx context.Context, cfg kernel.Config, logPath string) error {
+// Run starts the TUI and blocks until the user quits. With models, the user
+// can pick OpenRouter models; without, the model is fixed.
+func Run(ctx context.Context, cfg kernel.Config, logPath string, models *Models) error {
 	events := make(chan kernel.Event, 4096)
 	cfg.Emit = func(e kernel.Event) { events <- e }
 	sess := kernel.NewSession(cfg)
-	m := newModel(ctx, sess, events, cfg.ModelName, logPath)
+	m := newModel(ctx, sess, events, cfg.Settings, logPath, models)
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
@@ -46,11 +48,21 @@ type runDoneMsg struct {
 }
 
 type model struct {
-	ctx       context.Context
-	sess      *kernel.Session
-	events    <-chan kernel.Event
-	modelName string
-	logPath   string
+	ctx     context.Context
+	sess    *kernel.Session
+	events  <-chan kernel.Event
+	logPath string
+
+	// settings are what the next request uses. canRoute is set when Jev
+	// can choose efforts, and routed is the effort it chose for the latest
+	// request.
+	settings kernel.Settings
+	canRoute bool
+	routed   checkpoint.Effort
+	// models is nil when there is no model picker, and picker is set while
+	// it is open.
+	models *Models
+	picker *picker
 
 	vp        viewport.Model
 	input     textarea.Model
@@ -60,27 +72,41 @@ type model struct {
 	cancel    context.CancelFunc
 	status    string
 	width     int
+	height    int
 }
 
-func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Event, modelName, logPath string) *model {
+func newModel(ctx context.Context, sess *kernel.Session, events <-chan kernel.Event, settings kernel.Settings, logPath string, models *Models) *model {
 	in := textarea.New()
-	in.Placeholder = "Ask Girdle to do something. Enter sends, Ctrl+C stops or quits."
+	in.Placeholder = "Ask Girdle to do something. Enter sends · " + keyHint(models) + " · ctrl+c stops or quits"
 	in.ShowLineNumbers = false
 	in.SetHeight(3)
 	in.Prompt = "› "
 	in.KeyMap.InsertNewline.SetEnabled(false)
 	in.Focus()
 	vp := viewport.New()
-	return &model{
-		ctx: ctx, sess: sess, events: events, modelName: modelName, logPath: logPath,
+	m := &model{
+		ctx: ctx, sess: sess, events: events, logPath: logPath,
+		settings: settings, canRoute: sess.CanAutoEffort(), models: models,
 		vp: vp, input: in,
 		status: "ready",
-		lines:  []string{dimStyle.Render(fmt.Sprintf("Girdle · %s · Jev checkpoints on · log %s", modelName, logPath))},
+		lines:  []string{dimStyle.Render(fmt.Sprintf("Girdle · %s · Jev checkpoints on · log %s", settings.ModelName, logPath))},
 	}
+	if models != nil {
+		m.startPicker()
+	}
+	return m
+}
+
+// keyHint reminds the user how to change the model and effort.
+func keyHint(models *Models) string {
+	if models == nil {
+		return "shift+tab effort"
+	}
+	return "shift+tab effort · ctrl+l models"
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.waitForEvent())
+	return tea.Batch(textarea.Blink, m.waitForEvent(), m.fetchCatalog())
 }
 
 func (m *model) waitForEvent() tea.Cmd {
@@ -91,20 +117,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 		m.input.SetWidth(msg.Width)
 		m.vp.SetWidth(msg.Width)
 		m.vp.SetHeight(max(3, msg.Height-m.input.Height()-2))
 		m.refresh()
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			if m.running {
 				m.cancel()
 				m.status = "stopping…"
 				return m, nil
 			}
 			return m, tea.Quit
+		}
+		if m.picker != nil {
+			return m, m.updatePicker(msg)
+		}
+		switch msg.String() {
+		case "shift+tab":
+			m.cycleEffort()
+			return m, nil
+		case "ctrl+l":
+			if m.models == nil {
+				m.status = "the model picker works with OpenRouter only"
+			} else {
+				m.openPicker()
+			}
+			return m, nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" || m.running {
@@ -121,6 +161,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.handleEvent(kernel.Event(msg))
 		cmds = append(cmds, m.waitForEvent())
+	case catalogMsg:
+		m.takeCatalog(msg)
 	case runDoneMsg:
 		m.running = false
 		m.cancel = nil
@@ -167,7 +209,8 @@ func (m *model) handleEvent(e kernel.Event) {
 		m.appendLine(decisionStyle.Render("◆ " + describeDecision(e.Decision)))
 	case kernel.EventRoute:
 		if r := e.Route; r != nil {
-			m.appendLine(decisionStyle.Render(fmt.Sprintf("◆ jev · complexity %.2f → %s reasoning · %dms", r.Score, r.Effort, r.LatencyMS)))
+			m.routed = e.Effort
+			m.appendLine(decisionStyle.Render(fmt.Sprintf("◆ jev · complexity %.2f · %s reasoning · %dms", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)))
 		}
 	case kernel.EventHeartbeat:
 		if h := e.Heartbeat; h != nil && h.Action != checkpoint.Continue {
@@ -215,8 +258,16 @@ func (m *model) refresh() {
 }
 
 func (m *model) View() tea.View {
-	status := statusStyle.Render(fmt.Sprintf(" %s · %s", m.status, m.modelName))
-	v := tea.NewView(m.vp.View() + "\n" + status + "\n" + m.input.View())
+	status := statusStyle.Render(fmt.Sprintf(" %s · %s · effort %s", m.status, m.settings.ModelName, m.effortLabel()))
+	if hint := dimStyle.Render(keyHint(m.models) + " "); lipgloss.Width(status)+lipgloss.Width(hint) < m.width {
+		status += strings.Repeat(" ", m.width-lipgloss.Width(status)-lipgloss.Width(hint)) + hint
+	}
+	var v tea.View
+	if m.picker != nil {
+		v = tea.NewView(m.pickerView(max(3, m.height-1)) + "\n" + status)
+	} else {
+		v = tea.NewView(m.vp.View() + "\n" + status + "\n" + m.input.View())
+	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v

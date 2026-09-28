@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,10 +37,17 @@ const (
 
 // Session is one conversation in one working directory.
 type Session struct {
-	ID    string
-	cfg   Config
-	model sessionModel // cfg.Model, raced if cfg.Race asks for it
-	tools []fantasy.AgentTool
+	ID  string
+	cfg Config
+	// given is the config as passed in, before resolving: settings resolve
+	// against it again.
+	given Config
+	// next holds settings Configure left for the next request.
+	next atomic.Pointer[Settings]
+	// canAuto is set when Jev can choose request efforts.
+	canAuto bool
+	model   sessionModel // cfg.Model, raced if cfg.Race asks for it
+	tools   []fantasy.AgentTool
 	// resetTools tells the tools a new request has started.
 	resetTools func()
 	// pruned holds the tool calls whose output compaction replaced.
@@ -112,23 +120,18 @@ func (s *Session) stopTurn(h halt) {
 
 // NewSession builds a session with the four built-in tools.
 func NewSession(cfg Config) *Session {
-	cfg = cfg.resolved()
-	s := &Session{ID: uuid.New().String(), cfg: cfg, edited: map[string]bool{}}
+	s := &Session{ID: uuid.New().String(), given: cfg, cfg: cfg.resolved(), edited: map[string]bool{}}
+	probe := cfg
+	probe.AutoEffort = true
+	s.canAuto = probe.resolved().AutoEffort
+	cfg = s.cfg
 	if cfg.Batch {
 		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
 	} else {
 		s.tools = tools.All(cfg.Dir, s.toolOptions())
 	}
-	s.model = sessionModel{LanguageModel: race.New(cfg.Model, cfg.Race, s.stagger, s.noteRace), s: s}
-	s.agent = fantasy.NewAgent(
-		s.model,
-		fantasy.WithSystemPrompt(systemPrompt(cfg)),
-		fantasy.WithTools(s.tools...),
-		fantasy.WithStopConditions(fantasy.StepCountIs(cfg.MaxStepsPerTurn)),
-		fantasy.WithProviderOptions(cfg.ProviderOptions),
-	)
-	s.emit(Event{Type: EventSessionStart, Meta: map[string]string{
-		"model":       cfg.ModelName,
+	s.useModel()
+	meta := map[string]string{
 		"jev_model":   jevModel(cfg.Jev),
 		"dir":         cfg.Dir,
 		"checkpoints": fmt.Sprint(cfg.Checkpoints),
@@ -147,8 +150,59 @@ func NewSession(cfg Config) *Session {
 		"tripwire":    fmt.Sprint(cfg.Tripwire),
 		"leftovers":   fmt.Sprint(cfg.Leftovers),
 		"grepctx":     fmt.Sprint(cfg.GrepContext),
-	}})
+	}
+	maps.Copy(meta, s.settingsMeta())
+	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	return s
+}
+
+// Configure changes the model and reasoning effort from the next request
+// on. It is safe to call while a request runs.
+func (s *Session) Configure(set Settings) { s.next.Store(&set) }
+
+// CanAutoEffort reports whether Jev can choose request efforts, so that
+// Settings.AutoEffort takes effect.
+func (s *Session) CanAutoEffort() bool { return s.canAuto }
+
+// applySettings switches to the settings Configure left, if any, as a
+// request starts.
+func (s *Session) applySettings() {
+	set := s.next.Swap(nil)
+	if set == nil {
+		return
+	}
+	s.given.Settings = *set
+	resolved := s.given.resolved()
+	// Only the fields settings decide change: goroutines still finishing the
+	// last request may be reading the rest.
+	s.cfg.Settings, s.cfg.Speculate = resolved.Settings, resolved.Speculate
+	s.useModel()
+	s.emit(Event{Type: EventSettings, Meta: s.settingsMeta()})
+}
+
+// useModel builds the agent around cfg.Model.
+func (s *Session) useModel() {
+	s.model = sessionModel{LanguageModel: race.New(s.cfg.Model, s.cfg.Race, s.stagger, s.noteRace), s: s}
+	s.agent = fantasy.NewAgent(
+		s.model,
+		fantasy.WithSystemPrompt(systemPrompt(s.cfg)),
+		fantasy.WithTools(s.tools...),
+		fantasy.WithStopConditions(fantasy.StepCountIs(s.cfg.MaxStepsPerTurn)),
+	)
+}
+
+// settingsMeta records the settings for the log.
+func (s *Session) settingsMeta() map[string]string {
+	efforts := make([]string, len(s.cfg.Efforts))
+	for i, e := range s.cfg.Efforts {
+		efforts[i] = string(e)
+	}
+	return map[string]string{
+		"model":       s.cfg.ModelName,
+		"auto_effort": fmt.Sprint(s.cfg.AutoEffort),
+		"effort":      string(s.cfg.Effort),
+		"efforts":     strings.Join(efforts, ","),
+	}
 }
 
 // Usage returns the tokens used so far.
@@ -180,6 +234,7 @@ func (s *Session) Seed(msgs []fantasy.Message) {
 
 // Run sends prompt and works until the task is done or the user is needed.
 func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
+	s.applySettings()
 	s.emit(Event{Type: EventUserMessage, Text: prompt})
 	s.task = prompt
 	s.resetFacts()
@@ -203,13 +258,16 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			snap = TakeSnapshot(ctx, s.cfg.Dir, cmp.Or(s.cfg.SnapshotBudget, DefaultSnapshotBudget), prompt, pick)
 		})
 	}
-	if s.cfg.Speculate {
-		// The goroutine gets its own copy of the channel: the first LLM call
-		// takes s.routing and clears it, possibly before the goroutine runs.
+	switch {
+	case s.cfg.Speculate || s.cfg.Route && !s.cfg.AutoEffort:
+		// The first LLM call starts at once, on a guess or on the pinned
+		// effort, and Jev's route catches up with it. The goroutine gets its
+		// own copy of the channel: the first LLM call takes s.routing and
+		// clears it, possibly before the goroutine runs.
 		routing := make(chan checkpoint.RouteDecision, 1)
 		s.routing = routing
 		go func() { routing <- s.routeDecision(ctx, prompt) }()
-	} else {
+	default:
 		s.route(ctx, prompt)
 	}
 	wg.Wait()
@@ -247,6 +305,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 
 // Resume evaluates the seeded conversation's last turn first, then carries on.
 func (s *Session) Resume(ctx context.Context, task string) (Outcome, string) {
+	s.applySettings()
 	s.resetFacts()
 	s.route(ctx, task)
 	return s.loop(ctx, task, false)
@@ -260,11 +319,11 @@ func (s *Session) resetFacts() {
 	s.intent, s.gone, s.leftoverNudges = nil, nil, 0
 	s.requestSteps, s.beats = 0, 0
 	s.pruned = map[string]bool{}
+	_, s.callOptions = s.cfg.effort(s.cfg.Effort)
 }
 
-// route asks Jev how hard the request is and sets this run's reasoning effort.
+// route asks Jev how hard the request is and sets its reasoning effort.
 func (s *Session) route(ctx context.Context, request string) {
-	s.callOptions = nil
 	if s.cfg.Route {
 		s.applyRoute(s.routeDecision(ctx, request))
 	}
@@ -274,11 +333,21 @@ func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.
 	return checkpoint.Route(ctx, s.cfg.Jev, checkpoint.RouteState{Request: request}, s.cfg.RoutePolicy)
 }
 
-func (s *Session) applyRoute(d checkpoint.RouteDecision) {
+// applyRoute takes Jev's route for the request and sets the reasoning
+// effort its LLM calls use: Jev's choice with AutoEffort, unless the route
+// failed, and otherwise cfg.Effort, fitted to the model. It returns that
+// effort.
+func (s *Session) applyRoute(d checkpoint.RouteDecision) checkpoint.Effort {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	s.testsAsked = d.Tests
-	s.callOptions = s.cfg.EffortOptions(d.Effort)
-	s.emit(Event{Type: EventRoute, Route: &d})
+	want := s.cfg.Effort
+	if s.cfg.AutoEffort && d.Error == "" {
+		want = d.Effort
+	}
+	used, opts := s.cfg.effort(want)
+	s.callOptions = opts
+	s.emit(Event{Type: EventRoute, Route: &d, Effort: used})
+	return used
 }
 
 func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome, string) {

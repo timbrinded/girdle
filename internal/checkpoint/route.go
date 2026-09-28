@@ -6,15 +6,6 @@ import (
 	"github.com/timbrinded/girdle/internal/jev"
 )
 
-// Effort is the reasoning effort the LLM is asked to use.
-type Effort string
-
-const (
-	EffortLow    Effort = "low"
-	EffortMedium Effort = "medium"
-	EffortHigh   Effort = "high"
-)
-
 // RouteState is what Jev sees when a request arrives.
 type RouteState struct {
 	Request string `json:"request"`

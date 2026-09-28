@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/timbrinded/girdle/internal/clip"
 	"github.com/timbrinded/girdle/internal/jev"
 	"github.com/timbrinded/girdle/internal/kernel"
+	"github.com/timbrinded/girdle/internal/models"
 	"github.com/timbrinded/girdle/internal/tui"
 )
 
@@ -60,14 +62,14 @@ func run() int {
 		prompt      = flag.String("p", "", "run this prompt headless and exit when done")
 		dir         = flag.String("C", ".", "working directory")
 		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (ZEN_API_KEY)")
-		model       = flag.String("model", cmp.Or(os.Getenv("GIRDLE_MODEL"), defaultModel), "model ID at the provider (default "+defaultModel+" on OpenRouter; required with -provider zen)")
+		model       = flag.String("model", os.Getenv("GIRDLE_MODEL"), "model ID at the provider (default: the default saved in the TUI's model picker, or "+defaultModel+" on OpenRouter; required with -provider zen)")
 		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (ZEN_API_KEY, "+zenJevModel+")")
-		reasoning   = flag.String("reasoning", "medium", "reasoning effort: none, minimal, low, medium, high, xhigh")
+		reasoning   = flag.String("reasoning", "medium", "reasoning effort when Jev can't choose one: none, minimal, low, medium, high, xhigh or max, fitted to what the model accepts")
 		logPath     = flag.String("log", "", "event log path (default: a new file under ~/.local/state/girdle/sessions)")
 		jsonOut     = flag.Bool("json", false, "headless: print events as JSON lines")
 		seedPath    = flag.String("seed", "", "headless: start from a seeded conversation (JSON)")
 		noJev       = flag.Bool("no-checkpoints", false, "disable Jev checkpoints: stop at every turn end")
-		noRoute     = flag.Bool("no-route", false, "don't let Jev choose the reasoning effort; always use -reasoning")
+		noRoute     = flag.Bool("no-route", false, "don't let Jev choose the reasoning effort; always use -reasoning (without either flag, the effort saved in the TUI's model picker applies)")
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
@@ -112,18 +114,54 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if *provider == "zen" && !explicit["model"] && os.Getenv("GIRDLE_MODEL") == "" {
+	if *provider == "zen" && *model == "" {
 		return fail(errors.New("-provider zen needs -model: Zen's free models only work inside OpenCode, so pick a paid one"))
 	}
-	cfg, err := buildConfig(ctx, workDir, *provider, *model, *reasoning, *jevVia, !*noJev)
+	cfg, open, err := buildConfig(*provider, *jevVia, !*noJev)
 	if err != nil {
 		return fail(err)
 	}
+	// The model picker's list, defaults and cached catalogue are
+	// OpenRouter's. With another provider, efforts are unknown and sent as
+	// asked.
+	store := models.DefaultStore()
+	var saved models.List
+	var catalog models.Catalog
+	if *provider == "openrouter" {
+		if saved, err = store.Load(); err != nil {
+			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved models:", err)
+		}
+		// The catalogue is only a cache: without it, nothing is withdrawn.
+		catalog, _ = store.Catalog()
+	}
+	modelName, note := *model, ""
+	if modelName == "" {
+		modelName, note = saved.Start(catalog, defaultModel)
+	}
+	lm, err := open(ctx, modelName)
+	if err != nil {
+		return fail(err)
+	}
+	effort, auto := checkpoint.Effort(*reasoning), !*noRoute
+	if d := saved.Default.Effort; d != "" && !explicit["reasoning"] && !explicit["no-route"] {
+		e, a, err := models.ParseEffort(d)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "girdle: ignoring the saved effort:", err)
+		} else {
+			effort, auto = cmp.Or(e, effort), a
+		}
+	}
+	cfg.Settings = kernel.Settings{
+		Model: lm, ModelName: modelName, Efforts: catalog.Efforts(modelName),
+		AutoEffort: auto, Effort: effort,
+	}
+	cfg.Dir = workDir
 	cfg.Policy.MaxNudges = *maxNudges
 	cfg.MaxStepsPerTurn = *maxSteps
 	// Features whose prerequisites are off, such as Jev, are turned off by
-	// the kernel.
-	cfg.Route = !*noRoute
+	// the kernel. Jev routes even a pinned effort: whether a request asks
+	// for tests matters to early stop.
+	cfg.Route = true
 	cfg.Snapshot = withFast("snapshot", *snapshot)
 	cfg.Batch = withFast("batch", *batch)
 	cfg.EarlyStop = withFast("early-stop", *earlyStop)
@@ -168,10 +206,22 @@ func run() int {
 	cfg.Log = log
 
 	if *prompt == "" && *seedPath == "" {
-		if err := tui.Run(ctx, cfg, path); err != nil {
+		var picker *tui.Models
+		if *provider == "openrouter" {
+			picker = &tui.Models{
+				Store: store, List: saved, Catalog: catalog, Note: note, Open: open,
+				Fetch: func(ctx context.Context) (models.Catalog, error) {
+					return models.Fetch(ctx, http.DefaultClient, models.CatalogURL)
+				},
+			}
+		}
+		if err := tui.Run(ctx, cfg, path, picker); err != nil {
 			return fail(err)
 		}
 		return exitDone
+	}
+	if note != "" {
+		fmt.Fprintln(os.Stderr, "girdle:", note)
 	}
 
 	if *timeoutFlag > 0 {
@@ -213,15 +263,16 @@ func run() int {
 	}
 }
 
-func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, jevVia string, checkpoints bool) (kernel.Config, error) {
+// buildConfig sets up the provider and Jev. open builds one of the
+// provider's models by its ID.
+func buildConfig(providerName, jevVia string, checkpoints bool) (cfg kernel.Config, open func(context.Context, string) (fantasy.LanguageModel, error), err error) {
 	var provider fantasy.Provider
 	var effort func(checkpoint.Effort) fantasy.ProviderOptions
-	var err error
 	switch providerName {
 	case "openrouter":
 		key := os.Getenv("OPENROUTER_API_KEY")
 		if key == "" {
-			return kernel.Config{}, errors.New("OPENROUTER_API_KEY is not set")
+			return kernel.Config{}, nil, errors.New("OPENROUTER_API_KEY is not set")
 		}
 		provider, err = openrouter.New(openrouter.WithAPIKey(key))
 		effort = func(e checkpoint.Effort) fantasy.ProviderOptions {
@@ -232,20 +283,16 @@ func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, j
 	case "zen":
 		key := zenKey()
 		if key == "" {
-			return kernel.Config{}, errors.New("ZEN_API_KEY is not set: get a key at https://opencode.ai/auth")
+			return kernel.Config{}, nil, errors.New("ZEN_API_KEY is not set: get a key at https://opencode.ai/auth")
 		}
 		provider, err = openaicompat.New(openaicompat.WithBaseURL(zenBaseURL), openaicompat.WithAPIKey(key),
 			openaicompat.WithResponsesAPIFunc(zenResponsesModel))
 		effort = zenEffort
 	default:
-		return kernel.Config{}, fmt.Errorf("unknown provider %q: use openrouter or zen", providerName)
+		return kernel.Config{}, nil, fmt.Errorf("unknown provider %q: use openrouter or zen", providerName)
 	}
 	if err != nil {
-		return kernel.Config{}, err
-	}
-	model, err := provider.LanguageModel(ctx, modelName)
-	if err != nil {
-		return kernel.Config{}, err
+		return kernel.Config{}, nil, err
 	}
 	var jc *jev.Client
 	if checkpoints {
@@ -255,28 +302,24 @@ func buildConfig(ctx context.Context, dir, providerName, modelName, reasoning, j
 		case "zen":
 			key := zenKey()
 			if key == "" {
-				return kernel.Config{}, errors.New("-jev zen needs ZEN_API_KEY")
+				return kernel.Config{}, nil, errors.New("-jev zen needs ZEN_API_KEY")
 			}
 			jc = jev.New(zenJevURL, zenJevModel, key)
 		default:
 			err = fmt.Errorf("unknown -jev %q: use typesafe or zen", jevVia)
 		}
 		if err != nil {
-			return kernel.Config{}, err
+			return kernel.Config{}, nil, err
 		}
 	}
 	return kernel.Config{
-		Model:           model,
-		ModelName:       modelName,
-		ProviderOptions: effort(checkpoint.Effort(reasoning)),
-		EffortOptions:   effort,
-		Jev:             jc,
-		Dir:             dir,
-		Policy:          checkpoint.DefaultPolicy,
-		RoutePolicy:     checkpoint.DefaultRoutePolicy,
-		StepPolicy:      checkpoint.DefaultStepPolicy,
-		Checkpoints:     checkpoints,
-	}, nil
+		EffortOptions: effort,
+		Jev:           jc,
+		Policy:        checkpoint.DefaultPolicy,
+		RoutePolicy:   checkpoint.DefaultRoutePolicy,
+		StepPolicy:    checkpoint.DefaultStepPolicy,
+		Checkpoints:   checkpoints,
+	}, provider.LanguageModel, nil
 }
 
 // zenKey is the OpenCode Zen API key, from ZEN_API_KEY or OPENCODE_API_KEY.
@@ -330,7 +373,7 @@ func headlessPrinter(asJSON bool) func(kernel.Event) {
 			fmt.Printf("◆ jev %s: %s (%s) %dms\n", d.Checkpoint, d.Action, d.Rule, d.LatencyMS)
 		case kernel.EventRoute:
 			r := e.Route
-			fmt.Printf("◆ jev route: complexity %.2f → %s effort %dms\n", r.Score, r.Effort, r.LatencyMS)
+			fmt.Printf("◆ jev route: complexity %.2f → %s effort %dms\n", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)
 		case kernel.EventNudge:
 			fmt.Printf("↻ %s\n", e.Text)
 		case kernel.EventError:

@@ -23,6 +23,7 @@ const (
 	EventTurnEnd       EventType = "turn_end"
 	EventDecision      EventType = "decision"
 	EventRoute         EventType = "route"
+	EventSettings      EventType = "settings"   // the model or reasoning effort changed, from this request on
 	EventSnapshot      EventType = "snapshot"   // files sent with a request
 	EventStep          EventType = "step"       // one LLM call: timing and usage
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
@@ -53,6 +54,9 @@ type Event struct {
 	Usage    *Usage                    `json:"usage,omitempty"`
 	Decision *checkpoint.Decision      `json:"decision,omitempty"`
 	Route    *checkpoint.RouteDecision `json:"route,omitempty"`
+	// Effort is set on route events: the reasoning effort the request's LLM
+	// calls use, after any pin and fitting it to the model.
+	Effort checkpoint.Effort `json:"effort,omitempty"`
 	// Heartbeat is set on heartbeat events.
 	Heartbeat *checkpoint.HeartbeatDecision `json:"heartbeat,omitempty"`
 	Tripwire  *checkpoint.TripwireDecision  `json:"tripwire,omitempty"`

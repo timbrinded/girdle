@@ -14,7 +14,17 @@ bin/girdle                           # TUI in the current directory
 bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it needs you (2)
 ```
 
-The default model is `stealth/space-bunny-alpha` on OpenRouter. It's free for now, and the fast flow is measured and tuned on it. It is an anonymous model whose provider may log prompts, so use it on public code only. It may also be withdrawn without notice. For private code, pick another with `-model` or `GIRDLE_MODEL`, for example `meta/muse-spark-1.3-contributor` ([decision 0021](docs/decisions/0021-default-model.md)).
+The default model is `stealth/space-bunny-alpha` on OpenRouter. It's free for now, and the fast flow is measured and tuned on it. It is an anonymous model whose provider may log prompts, so use it on public code only. It may also be withdrawn without notice. For private code, pick another in the model picker, or with `-model` or `GIRDLE_MODEL`, for example `meta/muse-spark-1.3-contributor` ([decision 0021](docs/decisions/0021-default-model.md)).
+
+### Models and reasoning effort
+
+In the TUI, `ctrl+l` opens the model picker:
+- `a` searches OpenRouter's models that take tool calls, with their price, context size and the reasoning efforts each accepts.
+- `enter` switches to a model from the next request.
+- `x` removes one. If it was in use, or the default, the most recently picked model takes its place.
+- `d` makes the current model and effort what new sessions start with, headless runs included. `-model`, `GIRDLE_MODEL`, `-reasoning` and `-no-route` still override them.
+
+`shift+tab` steps through the effort settings, independently of the model: `auto`, where Jev chooses per request, then each effort the model accepts. A pinned effort the model doesn't accept is sent as the nearest one it does. If OpenRouter stops listing a model, Girdle switches to the most recently picked one it still lists. See [decision 0023](docs/decisions/0023-model-picker.md).
 
 Useful flags:
 - `-C dir`, `-model`, `-reasoning` and `-log path`.

@@ -51,7 +51,7 @@ func (m *effortModel) seen(t *testing.T, n int) []string {
 func speculate(t *testing.T, routed checkpoint.Effort, wantCalls int) (answer string, calls []string, s *Session) {
 	t.Helper()
 	inner := &effortModel{}
-	s = &Session{cfg: Config{EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions {
+	s = &Session{cfg: Config{Efforts: checkpoint.Efforts, AutoEffort: true, EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions {
 		return fantasy.ProviderOptions{string(e): nil}
 	}}}
 	s.routing = make(chan checkpoint.RouteDecision, 1)
