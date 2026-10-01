@@ -10,15 +10,16 @@ The goal is **an agent you can leave alone**. This is an experimental implementa
 
 ## Why Girdle
 
-Girdle gives the task **an explicit completion decision**. Jev evaluates the request and work evidence; Go applies the resulting stop, nudge or handoff. An unfinished task can continue after the LLM ends a turn, and the event log shows why the agent stopped or continued.
+In the recorded warm Muse Spark suites, `-fast` completed tasks in **roughly half the time** of Girdle's default flow, using the **same model and matching its observed pass rate**. Girdle can also **nudge unfinished work to continue** and **screen risky shell commands before execution**.
 
-**`-fast` is built around fewer LLM round trips.** A separate read, search or edit can mean waiting for another model response before work continues. Girdle groups that work:
+![Girdle: roughly twice as fast on the two recorded warm Muse Spark suites, with the same model and observed pass rate. Batched tools reduce model round trips; Jev can nudge unfinished work and redirect loops or drift; the shell tripwire combines parsed command checks with risk and authorization judgements.](docs/assets/why-girdle.svg)
 
-- **Context arrives with the task.** Repository context is included up front, with code named in the request and relevant files selected for larger repositories.
-- **Tools do more per call.** `lookup` gathers several files, definitions or searches at once. Search results can include the containing definitions, saving a separate read. `apply` makes a batch of changes and runs the supplied check in one call.
-- **Checks can end the run.** After a successful check, Jev can judge completion and end the request before another main LLM call. The fast flow also attempts an independently generated test of the request.
+- **Less waiting between useful steps.** Fast mode sends repository context with the task, gathers several files or searches in one `lookup`, and batches changes in `apply`. Search results can carry their containing definitions. Each saved round trip removes a wait for another model response.
+- **Automatic continuation.** When Jev judges a turn incomplete, Girdle can prompt another turn. In fast mode, a heartbeat can also redirect looping or off-task work. Decisions and their evidence are logged, so you can inspect why it continued or stopped.
+- **Checks behind “done”.** `apply` runs a check with the changes, and fast mode attempts an independently generated test of the request. Jev assesses completion from the work evidence and requirement coverage; it can end a checked task before another main LLM call.
+- **Shell commands get a risk check.** With a successful ast-grep parse, code blocks recognized catastrophic cases. Jev judges other potentially risky commands against the user's authorization. Ordinary sessions retain your account's filesystem and network access; see the [security boundaries](SECURITY.md).
 
-Racing and hedging address long provider waits by launching extra copies of main LLM calls. They can reduce latency at the cost of extra compute, usage and spend. The [benchmarks below](#evidence-so-far) compare `-fast` with Girdle's default flow; the measured gains depend on the tasks, model and warm or cold conditions.
+Racing and hedging also launch extra LLM calls to reduce provider latency and can increase usage and spend. The [benchmarks below](#evidence-so-far) show the task sets, models and warm or cold conditions behind the measured gains.
 
 ## Get started
 
