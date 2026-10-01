@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="408" viewBox="0 0 1000 408" role="img" aria-labelledby="benefits-title benefits-description">
+  <title id="benefits-title">Why Girdle: measured speed, progress checks and shell checks</title>
+  <desc id="benefits-description">In the recorded warm Muse Spark 1.3 Contributor comparisons of 26–27 September 2026, fast flow took roughly half the mean completion time of default flow with the same observed pass rate: 19.4 versus 38.8 seconds on small fixtures, and 33.2 versus 66.2 seconds on real repositories. Repository context and batched tools reduce model round trips. Jev can nudge unfinished work and redirect loops or drift. The shell tripwire blocks recognized catastrophic cases from parsed commands and judges other risks and authorization. Checkpoints are probabilistic; ordinary sessions use the account's permissions and are not an OS sandbox.</desc>
+  <defs>
+    <linearGradient id="card-green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2d654f"/>
+      <stop offset="1" stop-color="#193e30"/>
+    </linearGradient>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="125%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#202822" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect width="1000" height="408" rx="24" fill="#f5f2e9"/>
+  <rect x="24" y="24" width="304" height="360" rx="24" fill="url(#card-green)" filter="url(#card-shadow)"/>
+  <rect x="25" y="25" width="302" height="358" rx="23" fill="none" stroke="#76a08a" stroke-opacity=".3"/>
+  <g font-family="Inter, sans-serif" fill="#f5f2e9">
+    <text x="52" y="64" font-size="14" font-weight="600" fill="#c9dece">FAST FLOW</text>
+    <text x="48" y="161" font-size="100" font-weight="700">≈2×</text>
+    <text x="52" y="206" font-size="38" font-weight="600">faster</text>
+    <text x="52" y="250" font-size="18" fill="#dfebdf">Recorded warm suites</text>
+    <text x="52" y="277" font-size="17" fill="#dfebdf">Muse Spark · fast vs default</text>
+    <path d="M52 302h248" stroke="#d9ebdb" stroke-opacity=".22"/>
+    <g fill="none" stroke="#c9dece" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m53 327 4 4 8-9M53 355l4 4 8-9"/>
+    </g>
+    <text x="76" y="334" font-size="16">Same model</text>
+    <text x="76" y="362" font-size="16">Same observed pass rate</text>
+  </g>
+  <g fill="none" stroke="#d9dcd1" stroke-width="1">
+    <path d="M362 143h614M362 269h614"/>
+  </g>
+  <g font-family="Inter, sans-serif">
+    <g aria-hidden="true">
+      <rect x="362" y="35" width="42" height="42" rx="12" fill="#f0e5d8"/>
+      <path d="m385 44-12 17h9l-3 11 14-19h-10z" fill="none" stroke="#bd5637" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="362" y="161" width="42" height="42" rx="12" fill="#e3e9df"/>
+      <path d="M395 181a12 12 0 1 0-4 10M395 173v8h-8" fill="none" stroke="#285c48" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="362" y="287" width="42" height="42" rx="12" fill="#e3e9df"/>
+      <path d="m383 295 12 5v9c0 8-12 15-12 15s-12-7-12-15v-9zM377 309l4 4 8-9" fill="none" stroke="#285c48" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g fill="#202822" font-weight="600" font-size="24">
+      <text x="422" y="64">Fewer model round trips</text>
+      <text x="422" y="190">Keep unfinished work moving</text>
+      <text x="422" y="316">Check shell risk before execution</text>
+    </g>
+    <g fill="#536159" font-size="18">
+      <text x="422" y="96">Code arrives with the task.</text>
+      <text x="422" y="122">Reads and edits run in batches.</text>
+      <text x="422" y="222">Jev can nudge the next turn</text>
+      <text x="422" y="248">and redirect loops or drift.</text>
+      <text x="422" y="348">Parsed catastrophic cases are blocked.</text>
+      <text x="422" y="374">Jev judges risk and authorization.</text>
+    </g>
+  </g>
+</svg>
