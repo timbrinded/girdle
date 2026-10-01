@@ -3,7 +3,7 @@
 | Asset | Purpose | Size |
 | --- | --- | --- |
 | [girdle-logo.svg](girdle-logo.svg) | Geometric G with a belt and buckle | 256 × 256 |
-| [girdle-banner.svg](girdle-banner.svg) | README banner and project introduction | 1200 × 320 |
+| [girdle-banner.svg](girdle-banner.svg) | README banner and project introduction | 1200 × 292 |
 | [architecture.svg](architecture.svg) | Current component ownership and request outcomes | 1200 × 650 |
 | [why-girdle.svg](why-girdle.svg) | Recorded warm speedup, continuation checkpoints and shell-command guards | 1000 × 408 |
 | [benchmark-warm-flow.svg](benchmark-warm-flow.svg) | Warm fast/default completion times and pass counts | 720 × 432 pt |
