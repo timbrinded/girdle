@@ -24,6 +24,7 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 
+	"github.com/timbrinded/girdle/internal/buildinfo"
 	"github.com/timbrinded/girdle/internal/checkpoint"
 	"github.com/timbrinded/girdle/internal/clip"
 	"github.com/timbrinded/girdle/internal/jev"
@@ -60,6 +61,7 @@ func main() {
 
 func run() int {
 	var (
+		showVersion = flag.Bool("version", false, "print the version and exit")
 		prompt      = flag.String("p", "", "run this prompt headless and exit when done")
 		dir         = flag.String("C", ".", "working directory")
 		provider    = flag.String("provider", cmp.Or(os.Getenv("GIRDLE_PROVIDER"), "openrouter"), "LLM provider: openrouter (OPENROUTER_API_KEY) or zen, OpenCode Zen (ZEN_API_KEY)")
@@ -102,6 +104,10 @@ func run() int {
 		return nil
 	})
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("girdle", buildinfo.Version())
+		return exitDone
+	}
 	// -fast turns a set of flags on. A flag set explicitly wins, so an
 	// ablation is -fast with one part set to false.
 	explicit := map[string]bool{}

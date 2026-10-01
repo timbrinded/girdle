@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"runtime/debug"
 	"slices"
 	"strings"
 
 	"charm.land/fantasy"
 
 	"github.com/timbrinded/girdle/docs"
+	"github.com/timbrinded/girdle/internal/buildinfo"
 	"github.com/timbrinded/girdle/internal/checkpoint"
 )
 
@@ -99,7 +99,7 @@ func (s *Session) aboutGirdle(topics []string) string {
 func (s *Session) facts() string {
 	c := s.cfg
 	var b strings.Builder
-	fmt.Fprintf(&b, "Girdle version: %s\n", buildVersion())
+	fmt.Fprintf(&b, "Girdle version: %s\n", buildinfo.Version())
 	fmt.Fprintf(&b, "Working directory: %s\n", c.Dir)
 	fmt.Fprintf(&b, "Model: %s\n", c.ModelName)
 	switch {
@@ -127,22 +127,4 @@ func (s *Session) facts() string {
 		fmt.Fprintf(&b, "Each LLM call is raced %d times\n", c.Race)
 	}
 	return b.String()
-}
-
-// buildVersion is the module version and commit Girdle was built from.
-func buildVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	v := info.Main.Version
-	for _, st := range info.Settings {
-		switch {
-		case st.Key == "vcs.revision":
-			v += ", commit " + st.Value[:min(len(st.Value), 12)]
-		case st.Key == "vcs.modified" && st.Value == "true":
-			v += " with uncommitted changes"
-		}
-	}
-	return v
 }

@@ -71,6 +71,7 @@ The saved list contains model IDs, their last-picked timestamps, and the default
 | `-timeout duration` | `0` | Headless request deadline, such as `10m`; zero has no deadline |
 | `-log path` | New session file | Append the event log at this path |
 | `-json` | `false` | Headless JSONL events on stdout |
+| `-version` | `false` | Print the version and exit |
 | `-seed path` | Empty | Load a JSON object with `task` and `messages`, each containing `role` (`user` or `assistant`) and `text` |
 
 The [gate seed](../bench/scenarios/announce-then-stop.json) is a concrete `-seed` example. For instance:
