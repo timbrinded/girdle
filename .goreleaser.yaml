@@ -1,0 +1,48 @@
+version: 2
+
+project_name: girdle
+
+builds:
+  - main: ./cmd/girdle
+    binary: girdle
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/timbrinded/girdle/internal/buildinfo.version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    # No version in the name, so install.sh can fetch the latest release
+    # from releases/latest/download without asking the API.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - THIRD_PARTY_NOTICES.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^Merge "
+
+release:
+  header: |
+    Install or upgrade on Linux or macOS:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | sh
+    ```
+
+    Or with Go 1.27 or newer: `go install github.com/timbrinded/girdle/cmd/girdle@{{ .Tag }}`

@@ -4,7 +4,6 @@ Girdle runs tools in the project you choose. Start in a Git checkout where you c
 
 ## Requirements
 
-- Go **1.27.0 or newer**, as declared in [go.mod](../go.mod).
 - Linux or macOS, with Bash on PATH. Shell execution uses Unix process groups; native Windows execution is not supported by the current implementation.
 - An [OpenRouter API key](https://openrouter.ai/settings/keys) for the LLM and a TypeSafe key for [Jev](https://docs.typesafe.ai), under the default configuration.
 - [ast-grep](https://ast-grep.github.io/guide/quick-start), recommended for structural lookup and the tripwire's code checks. Its full command name is `ast-grep`; Linux's `sg` may be a different program.
@@ -21,7 +20,31 @@ Without ast-grep, the tripwire asks Jev about every shell command. Structural lo
 
 ## Install
 
-Build from a checkout:
+Install the latest release on Linux or macOS (amd64 or arm64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | sh
+girdle -version
+```
+
+The script downloads the release archive for your platform from [GitHub releases](https://github.com/timbrinded/girdle/releases), checks it against the release's `checksums.txt`, and installs the binary into `~/.local/bin`. Run it again to upgrade. Two environment variables change what it does:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GIRDLE_VERSION` | Latest release | Release tag to install, such as `v0.1.0` |
+| `GIRDLE_INSTALL_DIR` | `~/.local/bin` | Directory for the binary |
+
+For example, `curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | GIRDLE_VERSION=v0.1.0 sh`. If `girdle` is not found afterwards, add the install directory to your PATH. You can also download an archive from the releases page and put its `girdle` binary on your PATH yourself.
+
+With Go **1.27.0 or newer**, as declared in [go.mod](../go.mod), install a release with Go instead:
+
+```bash
+go install github.com/timbrinded/girdle/cmd/girdle@latest
+```
+
+Go installs into `GOBIN` when set, otherwise into the `bin` directory of `GOPATH` (usually `~/go/bin`).
+
+To build from a checkout, for development or an unreleased commit:
 
 ```bash
 git clone https://github.com/timbrinded/girdle.git
@@ -29,14 +52,6 @@ cd girdle
 go build -o bin/girdle ./cmd/girdle
 bin/girdle -h
 ```
-
-To install the checkout's binary on your PATH:
-
-```bash
-go install ./cmd/girdle
-```
-
-Go installs into `GOBIN` when set, otherwise into the `bin` directory of `GOPATH` (usually `~/go/bin`). Add that directory to your PATH if `girdle` is not found. The examples below use the checkout's `bin/girdle`.
 
 ## Configure the keys
 
@@ -52,7 +67,7 @@ Girdle reads environment variables directly. It does not load `.env` files or sh
 ## Run a request
 
 ```bash
-bin/girdle -C /path/to/project
+girdle -C /path/to/project
 ```
 
 Type a request and press Enter. The TUI displays tool calls, checkpoint decisions and the final outcome. Ctrl+C cancels an active request; when idle, it exits the TUI. You can send another request in the same session after the current one ends.
@@ -60,13 +75,13 @@ Type a request and press Enter. The TUI displays tool calls, checkpoint decision
 For one headless request:
 
 ```bash
-bin/girdle -C /path/to/project -p "fix the failing test"
+girdle -C /path/to/project -p "fix the failing test"
 ```
 
 The fallback model is `stealth/space-bunny-alpha`; saved model choices may take precedence. To use a specific model, supply its provider ID:
 
 ```bash
-bin/girdle -C /path/to/project -model 'provider/model-id' -p "fix the failing test"
+girdle -C /path/to/project -model 'provider/model-id' -p "fix the failing test"
 ```
 
 The ID above is a placeholder: choose a tool-calling model available to your account. In the OpenRouter TUI, Ctrl+L opens the searchable picker.

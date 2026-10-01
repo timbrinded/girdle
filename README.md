@@ -23,23 +23,23 @@ Racing and hedging also launch extra LLM calls to reduce provider latency and ca
 
 ## Get started
 
-You need **Go 1.27.0 or newer**, Bash, and API keys for [OpenRouter](https://openrouter.ai/settings/keys) and [TypeSafe](https://docs.typesafe.ai). Normal use runs on Linux and macOS. Install [ast-grep](https://ast-grep.github.io/guide/quick-start) for structural code lookup and the shell tripwire's code checks.
+Girdle runs on Linux and macOS, with Bash on PATH. You need API keys for [OpenRouter](https://openrouter.ai/settings/keys) and [TypeSafe](https://docs.typesafe.ai). Install [ast-grep](https://ast-grep.github.io/guide/quick-start) for structural code lookup and the shell tripwire's code checks.
 
 ```bash
-git clone https://github.com/timbrinded/girdle.git
-cd girdle
-go build -o bin/girdle ./cmd/girdle
+curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | sh
 
 export OPENROUTER_API_KEY='your-openrouter-key'
 export TYPESAFE_API_KEY='your-typesafe-key'
 
-bin/girdle -C /path/to/project                          # interactive TUI
-bin/girdle -C /path/to/project -p "fix the failing test" # headless
+girdle -C /path/to/project                          # interactive TUI
+girdle -C /path/to/project -p "fix the failing test" # headless
 ```
+
+The script installs the latest release's binary into `~/.local/bin` after checking its checksum. With Go 1.27.0 or newer you can instead run `go install github.com/timbrinded/girdle/cmd/girdle@latest`.
 
 The configured fallback model is `stealth/space-bunny-alpha`. Treat it as a public-code choice: it is an anonymous model whose data policy and availability may change. Choose another model with `-model` or the TUI picker after checking the provider's data policy. Jev also receives task, code and tool-result context. See [security and data handling](SECURITY.md).
 
-[Installation and first run](docs/getting-started.md) covers installing on your PATH and resolving setup errors.
+[Installation and first run](docs/getting-started.md) covers the install options, building from source and resolving setup errors.
 
 ## How it works
 
@@ -48,8 +48,8 @@ Girdle checks what happens around the LLM's tool loop. At a turn end, Jev can en
 `-fast` enables a flow designed to reduce LLM round trips: repository context with the request, batched lookup and edits, checks after edits, and earlier completion decisions. It also attempts an independent test of the request. The first main LLM call races three copies; later calls start extra copies after a three-second hedge. Racing can increase usage and spend.
 
 ```bash
-bin/girdle -fast -C /path/to/project -p "fix the failing test"
-bin/girdle -fast -crosscheck=false -p "update the README"
+girdle -fast -C /path/to/project -p "fix the failing test"
+girdle -fast -crosscheck=false -p "update the README"
 ```
 
 The shell tripwire is enabled by default. It parses commands with ast-grep where available and uses Jev for decisions that need judgement. It is a guard on shell commands; ordinary sessions run with your filesystem and network access. See the [architecture](docs/architecture.md) and [security policy](SECURITY.md) for the boundaries.
