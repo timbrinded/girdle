@@ -60,7 +60,9 @@ main() {
 	fetch "$base/$archive" "$tmp/$archive" || fail "couldn't download $base/$archive"
 	fetch "$base/checksums.txt" "$tmp/checksums.txt" || fail "couldn't download $base/checksums.txt"
 	want=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
-	[ -n "$want" ] && [ "$want" = "$(sha256 "$tmp/$archive")" ] || fail "checksum mismatch for $archive"
+	if [ -z "$want" ] || [ "$want" != "$(sha256 "$tmp/$archive")" ]; then
+		fail "checksum mismatch for $archive"
+	fi
 
 	tar -xzf "$tmp/$archive" -C "$tmp" girdle
 	mkdir -p "$dir"
