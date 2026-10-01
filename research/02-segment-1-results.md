@@ -15,6 +15,7 @@
 | Benchmark | `bench/` | 13 tasks with hidden tests and reference solutions, a Pi runner in tmux, scoring, and the gate |
 
 **Gate (issue #1):** `bench/gate.sh` passes both scenarios on the final code, using real Jev and a real LLM.
+
 - `rename-across-files`: finished unattended, tests green, decisions logged.
 - `announce-then-stop`: Jev read the stalled turn as `in_progress` (confidence 1.00, evidence 0.03). It nudged, the LLM did the work, and the next decision was `done`.
 

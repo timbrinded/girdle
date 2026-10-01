@@ -3,12 +3,14 @@
 **Date:** 2026-09-26 · **Branch:** `feat/scale-bench`
 
 **Context:** With 0008 the fast flow was 1.5 to 2.5 times faster than the default flow. It still missed an occasional hidden test that the default flow passed. Each miss was a spec edge case that the model's own tests agreed with:
+
 - `argsort` consumed an iterator twice. The task said "iterable", and the model's tests used lists.
 - A line total of 7 × 1.005 was rounded in floats, giving 7.03 instead of 7.04. The model's tests only used exact values.
 
 A one-shot answer gets fewer chances than the default flow's step-by-step work to notice such a gap. The same model tends to test what it thought of when it wrote the code. Telling it to derive edge cases from the task's words helped only partly.
 
 **Decision:** `-crosscheck`, on with `-fast`.
+
 - **A separate writer.** When a request starts, a second LLM call begins alongside the main one. It uses the plain model at low effort, outside speculative routing. Since the update below it is also raced. It sees the task and the snapshot, never the agent's code.
 - **What it writes.** One small test file from the task's words: the stated cases, and the edge cases they imply. It uses literal expected values worked out by hand, never computed in the test. The file is new, with `girdle_crosscheck` in its name, and its check runs only that file. Any other change, such as an edit to an existing file, makes the cross-check void.
 - **When it runs.** The first time the agent's own check passes, before Jev is asked, Girdle writes the file, runs its check with pipefail, and removes it again, along with any `__pycache__` copies. It runs once per request, and waits at most 15 s for the writer.
@@ -21,6 +23,7 @@ A one-shot answer gets fewer chances than the default flow's step-by-step work t
 ## Update 2026-09-26: Jev screens failures, and results
 
 Of the first 8 failing cross-checks on the benchmarks, 5 were the test's own fault and 3 caught real edge cases:
+
 - **Own fault:** a wrong package name, a v1 import path, an ignored error return, and an illegal struct comparison.
 - **Real catches:** CRLF kept inside quoted CSV fields, and two slug truncation rules.
 

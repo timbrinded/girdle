@@ -3,12 +3,14 @@
 **Date:** 2026-09-26 · **Branch:** `feat/scale-bench`
 
 **Context:** The 13-task benchmark uses fixture repos of 1 to 5 KB, which fit whole in a snapshot. A scale suite (`bench/scale`) puts six tasks on real repositories at a pinned commit:
+
 - goldmark: 127 files, 1.6 MB, and a 10 s test suite.
 - more-itertools: a 175 KB, 5,600-line module, and a 7 s test suite.
 
 On that suite the fast flow passed every run, but it was no faster than the default flow and reported about 19 times the cost.
 
 **What broke, and the decision for each:**
+
 - **The snapshot filled its 64 KB budget in path order, mostly with docs.** A repository too large to include whole now gets its file list plus, in priority order:
   - the repository's agent instructions (`AGENTS.md`, `CLAUDE.md`)
   - files the request names in backticks

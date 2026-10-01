@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28 · **Branch:** `feat/scale-bench`
 
-A strict code-quality review of the branch restructured the code without changing what Girdle does. Four choices were not obvious from the code alone:
+A strict code-quality review of the branch restructured the code without changing what Girdle does. The following choices were not obvious from the code alone:
 
 - **Feature dependencies live in `kernel.Config.resolved`.**
   - The rules were written twice before: once as `&&` chains in `main.go`, and again as checks scattered through the kernel (`routingOn`, `earlyStopOn`, `s.cfg.Jev != nil`).
@@ -35,6 +35,7 @@ A strict code-quality review of the branch restructured the code without changin
   - Before, must-change's answers were dropped, and a failed request left no trace.
 
 Also:
+
 - apply now builds its result from the shell result's fields. Before, it cut the exit-code line out of the output text and put it back.
 - A refused cross-check is logged as "not run". It is no longer sent to Jev as a failing test.
 - `FindDefinitions` takes the file list its caller already has. The snapshot no longer runs `git ls-files` once for each name.

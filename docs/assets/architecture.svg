@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">Girdle architecture</title>
+  <desc id="desc">The TUI or headless CLI sends requests to the kernel. The kernel owns history, settings, tools and checkpoint policies. It calls the LLM for work, calls Jev for checkpoint judgements, and writes events to a local JSONL log. Tools can repeat until a request ends as done, needs_user, error or cancelled.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 10 5 0 10z" fill="#667367"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="650" rx="20" fill="#f5f2e9"/>
+  <g font-family="DejaVu Sans, sans-serif" fill="#202822">
+    <text x="44" y="57" font-size="30" font-weight="700">Who owns the work</text>
+    <text x="44" y="89" font-size="18" fill="#566056">One session kernel coordinates work, judgement and evidence.</text>
+    <rect x="44" y="134" width="238" height="174" rx="12" fill="#fff" stroke="#d6d7cc" stroke-width="2"/>
+    <text x="66" y="174" font-size="20" font-weight="700">TUI / headless CLI</text>
+    <text x="66" y="213" font-size="18">Requests</text>
+    <text x="66" y="243" font-size="18">Model + effort choices</text>
+    <text x="66" y="280" font-size="16" fill="#566056">Outcomes and live events</text>
+    <rect x="340" y="134" width="512" height="392" rx="12" fill="#e8ede4" stroke="#285c48" stroke-width="2"/>
+    <text x="366" y="179" font-size="26" font-weight="700" fill="#285c48">Kernel · code owns the loop</text>
+    <text x="366" y="216" font-size="18">History · request state · settings · usage</text>
+    <text x="366" y="246" font-size="18">LLM/tool steps repeat as needed</text>
+    <rect x="366" y="278" width="460" height="102" rx="8" fill="#fff"/>
+    <text x="386" y="313" font-size="21" font-weight="700">Tools</text>
+    <text x="386" y="344" font-size="18">Read + edit, or lookup + apply; Bash</text>
+    <text x="386" y="367" font-size="16" fill="#566056">Shell commands pass through the tripwire</text>
+    <rect x="366" y="400" width="460" height="100" rx="8" fill="#285c48"/>
+    <text x="386" y="436" font-size="21" font-weight="700" fill="#fff">Checkpoint policies</text>
+    <text x="386" y="471" font-size="18" fill="#fff">Apply decisions: stop / nudge / ask</text>
+    <rect x="910" y="134" width="246" height="174" rx="12" fill="#202822"/>
+    <text x="934" y="175" font-size="26" font-weight="700" fill="#fff">LLM</text>
+    <text x="934" y="215" font-size="18" fill="#fff">Plans and edits</text>
+    <text x="934" y="245" font-size="18" fill="#fff">Calls tools</text>
+    <text x="934" y="280" font-size="15" fill="#e0e5dc">Fantasy runs the inner loop</text>
+    <rect x="910" y="352" width="246" height="174" rx="12" fill="#bd5637"/>
+    <text x="934" y="393" font-size="26" font-weight="700" fill="#fff">Jev</text>
+    <text x="934" y="433" font-size="18" fill="#fff">Checkpoint questions</text>
+    <text x="934" y="463" font-size="18" fill="#fff">Probability distributions</text>
+    <text x="934" y="498" font-size="16" fill="#fff">Hosted decision API</text>
+    <rect x="44" y="352" width="238" height="174" rx="12" fill="#fff" stroke="#d6d7cc" stroke-width="2"/>
+    <text x="66" y="393" font-size="24" font-weight="700">Event log</text>
+    <text x="66" y="433" font-size="18">Local JSONL</text>
+    <text x="66" y="463" font-size="18">Calls, results, decisions</text>
+    <text x="66" y="498" font-size="14" fill="#566056">Appended throughout session</text>
+  </g>
+  <g fill="none" stroke="#667367" stroke-width="2.5" marker-end="url(#arrow)">
+    <path d="M282 203h55"/>
+    <path d="M340 249h-55"/>
+    <path d="M852 203h55"/>
+    <path d="M910 249h-55"/>
+    <path d="M852 409h55"/>
+    <path d="M910 455h-55"/>
+    <path d="M340 440h-55"/>
+  </g>
+  <path d="M44 559h1112" stroke="#d6d7cc" stroke-width="2"/>
+  <text x="44" y="594" font-family="DejaVu Sans, sans-serif" font-size="18" fill="#566056">Request outcomes</text>
+  <text x="257" y="594" font-family="DejaVu Sans Mono, monospace" font-size="20" fill="#202822">done · needs_user · error · cancelled</text>
+  <text x="44" y="624" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#566056">Completion and safety judgements are probabilistic. Ordinary sessions use the account's access.</text>
+</svg>

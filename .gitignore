@@ -25,3 +25,10 @@
 # upstream repositories cloned by bench/prepare.sh
 /bench/.cache/
 /bench/.warm/
+
+# local research checkouts and generated replay data
+/.research/
+/research/experiments/**/repos/
+/research/experiments/**/*.json
+/research/experiments/**/*.jsonl
+/research/experiments/**/snap-*.txt

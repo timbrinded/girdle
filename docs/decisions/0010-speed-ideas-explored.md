@@ -7,6 +7,7 @@ After 0009 the fast flow was 1.4 to 2.0 times faster than the default flow. This
 ## Kept, but neutral on the benchmark
 
 These were cheap and safe, but none moved the benchmark numbers (scale 1.27×, small 1.97× in their run, both within noise of before):
+
 - **Step-end threshold down from 0.8 to 0.7, with a tests-written guard.** In the logs every early stop from 0.80 to 0.85 passed its hidden tests (27 of 27). No run that went on from 0.70 to 0.80 changed code afterwards (0 of 28). Jev's coverage answers called "add tests" done before any test existed, so routing now asks whether the request wants tests. A run doesn't stop early while it does and no test file has changed.
 - **API names on failed checks.** When the compiler or runtime names something that doesn't exist, the apply result lists what that package, type or module really exports. It never triggered on the benchmark.
 - **Fail-fast fix-up checks.** A fix's check runs the quick test of what failed first, then the full proof.

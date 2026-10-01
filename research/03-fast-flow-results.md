@@ -5,6 +5,7 @@
 ## Where the time went
 
 In segment 1's benchmark, model time was 97% of a Girdle run. A typical run took about 8.6 LLM steps:
+
 - about 3 exploring (listing and reading files)
 - about 3 making one edit each
 - 1 or 2 running the tests
@@ -67,6 +68,7 @@ Details are in the decision records.
 ## What's left
 
 Nearly all of a fast run is one model call. The remaining levers are the model's own speed:
+
 - time to first token, which grows with hidden reasoning
 - output speed
 - how often the first answer passes its own check

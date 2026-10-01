@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Girdle logo</title>
+  <desc id="desc">A green open ring crossed by an orange belt and a square buckle, forming a geometric G.</desc>
+  <rect width="256" height="256" rx="48" fill="#f5f2e9"/>
+  <path d="M185 69a83 83 0 1 0 18 96" fill="none" stroke="#285c48" stroke-width="28" stroke-linecap="square"/>
+  <path d="M128 128h94" fill="none" stroke="#bd5637" stroke-width="28"/>
+  <rect x="160" y="108" width="42" height="40" rx="3" fill="#f5f2e9" stroke="#202822" stroke-width="9"/>
+  <path d="M181 115v26" fill="none" stroke="#202822" stroke-width="7"/>
+</svg>

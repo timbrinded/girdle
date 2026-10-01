@@ -3,6 +3,7 @@
 **Date:** 2026-09-26 · **Segment:** 1
 
 **Decision:**
+
 - Scenarios and the benchmark are shell scripts plus small Python scorers under `bench/`.
 - Each task has:
   - a fixture `repo/`

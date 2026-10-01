@@ -61,6 +61,7 @@ At scale the fast flow costs about 15% more than the default flow. On the small 
 ## What still works badly
 
 **Tasks that need the model to learn an unfamiliar API.** On gm-strike-tag the model takes 20 to 40 steps, mostly reading and searching one call at a time. By the end its prompt reaches about 60k tokens. The fast flow's one-shot design doesn't help when the model has to discover how the code works first. Candidates:
+
 - Get the model to batch its lookups, for example `definition` taking several names.
 - Relevance-judged pruning of old tool output (segment 4). Prompt caching makes large contexts cheap, so pruning is about latency and focus, not cost.
 

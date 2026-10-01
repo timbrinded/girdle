@@ -54,12 +54,14 @@ Times are what the suite adds most. The scale suite averages 30 to 40 s, and thi
 ### What the failures show
 
 Every false "done" came from a check reading the work as finished when the hidden tests disagreed:
+
 - **The turn-end check.** On gm-cjk-runes and gm-470, the step-end check correctly refused to stop, reading the work as not verified. The model then ended its turn, and the turn-end check accepted "done". That check reads only the final message and a summary of recent steps, not the changes and the check's output.
 - **The step-end check.** On tm-toml11 it stopped a run whose 1.1 support was still incomplete.
 
 ### Statement gaps found in calibration
 
 14 runs were excluded, and their tasks re-run:
+
 - Four statements missed something the hidden tests required: `slots=True` on a dataclass, the exact wording of an existing error, a precise specification of map ownership, and the expected text for each node type. In each case the agent had built what the statement asked.
 - One commit's hidden tests also checked an unrelated refactor from the same commit. Its disassembler test was dropped from the hidden tests.
 - Runs cut off by the old 10-minute limit were re-run under the new limit.

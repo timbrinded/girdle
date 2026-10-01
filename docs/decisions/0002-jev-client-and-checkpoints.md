@@ -3,6 +3,7 @@
 **Date:** 2026-09-26 · **Segment:** 1
 
 **Decision:**
+
 - `internal/jev` is a ~150-line HTTP client for `POST /v1/systemone`. It retries on 429, 529 and 5xx, and is pinned to `jev-1.13.0`. (`jev-1.13` is rejected as an unknown model.)
 - `internal/checkpoint` defines each checkpoint as a question map plus a `Policy` of thresholds. `Decide` maps answers to `stop`, `nudge` or `ask`, and returns the rule that fired. All of a checkpoint's questions go in one request.
 - The first checkpoint is `turn_end`. It asks a status Choice (done / in_progress / needs_user / stuck), an evidence Noul, and a needless-permission Noul.

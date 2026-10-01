@@ -35,6 +35,7 @@ Research notes, 25 Sep 2026. No production code yet. The experiments are in `res
 | Training | "RLCD", reinforcement learning for calibrated decisions (proper-scoring-rule rewards) |
 
 **Known weaknesses** (TypeSafe's own "jaggedness" page for 1.13), each of which shapes the harness design:
+
 - **Literal reading.** It answers the question as written. Put the intent in the wording.
 - **No maths, counting or date comparison.** Keep those in code.
 - **Indirection hurts.** Point questions at named paths in the state (for example ``Is `tool_call.command` …``).
@@ -90,6 +91,7 @@ Kev's API compatibility makes "hosted or local" a **config switch** (`base_url`)
 These are the responsibilities in production harnesses (Claude Code, Codex, OpenCode, Crush, Grok Build, Pi). **Phase** is when you'd need it (v0 = first usable headless build). **Jev** says what a decision engine can do there: **R** = replaces an LLM, heuristic or human decision; **A** = assists (filters or ranks for code or an LLM); **–** = no role (plumbing or generation).
 
 ### A. Surfaces
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Headless / print mode (`-p`), JSON event stream on stdout | v0 | – |
@@ -98,6 +100,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | IDE, desktop, web clients | v3 | – |
 
 ### B. Sessions and state
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Append-only event log per session (JSONL or SQLite). Everything else is a projection of it | v0 | – |
@@ -106,6 +109,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Export and share transcripts | v2 | – |
 
 ### C. Model layer
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Provider abstraction: streaming, tool-call deltas, reasoning traces, images, stop reasons. Each provider leaks differently (Zechner's main lesson from building `pi-ai`) | v0 | – |
@@ -115,6 +119,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | **Model routing**: which model or effort level for this turn | v1 | **R**: complexity Choice, plus fallback on low confidence |
 
 ### D. Context assembly
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | System prompt, environment block (cwd, OS, date, git status) | v0 | – |
@@ -125,6 +130,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Mid-conversation system reminders (todo state, file changed on disk, and so on) | v1 | **A**: "is this reminder relevant now?" |
 
 ### E. The loop
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Turn loop: stream → tool calls → execute → append results → repeat | v0 | – (the kernel) |
@@ -137,6 +143,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Cancellation that propagates into running tools | v0 | – |
 
 ### F. Tools
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | `read`, `write`, `edit` (str-replace or `apply_patch`), `bash`. Pi ships only these four, with a prompt under 1k tokens | v0 | – |
@@ -147,6 +154,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | **Deterministic fast paths**: "run the tests", "git status" dispatched straight to code with closed-set arguments (the function-calling cookbook) | v2 | **R** (skips a whole LLM round trip) |
 
 ### G. Safety
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Permission modes (ask, auto-edit, YOLO) and allow/deny rules per shell segment | v0 | – (code first; rules are exact) |
@@ -157,6 +165,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Project trust (untrusted repo ⇒ restricted mode) | v1 | – |
 
 ### H. Context management
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Overflow detection by token count | v0 | – (code) |
@@ -165,6 +174,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Long-term memory writes ("is this worth remembering?") | v3 | **R** gate plus LLM writer |
 
 ### I. Multi-agent and background work
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Subagents: isolated context, filtered tools, depth limit | v2 | **R**: "delegate this?" and "to which agent profile?" |
@@ -174,6 +184,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Supervising background agents ("is agent 3 still making progress?") | v2 | **R**, the same stuck/done questions asked from outside |
 
 ### J. Extensibility
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Hooks (pre/post tool, prompt submit, stop). OpenCode exposes `tool.execute.before/after`, `permission.ask`, `chat.messages.transform`. Pi exposes `beforeToolCall`, `afterToolCall`, `transformContext`, `getSteeringMessages`, `getFollowUpMessages` | v1 | Jev decisions *are* hooks in this design |
@@ -181,6 +192,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Slash commands, custom agents, plugins, skills | v2 | **R**: fuzzy command/skill matching |
 
 ### K. Observability and evaluation
+
 | Responsibility | Phase | Jev |
 |---|---|---|
 | Structured traces of every model call, tool call **and decision** (state, answers, model version, latency) | v0 | the decision log is the training set |
@@ -188,6 +200,7 @@ These are the responsibilities in production harnesses (Claude Code, Codex, Open
 | Offline eval harness (terminal-bench / SWE-bench style, plus a **decision eval set**) | v1 | measures Jev versus local models versus the LLM |
 
 ### L. Distribution
+
 Install/update, layered config (global → project → env → flags), telemetry opt-in, crash reports. All v1–v2, and none of it involves Jev.
 
 **Where the size comes from.** The *loop* is small in every harness. Measured as non-blank, non-comment lines:
@@ -227,7 +240,7 @@ Fan-out makes this cheap. All the questions for one event go in **one** request 
 
 ## 4. Architecture sketch
 
-```
+```text
             ┌───────────── events ─────────────┐
  user msg ──┤ tool result · turn end · timer   │
  CI/webhook ┤ background-agent report · steer  │
@@ -261,6 +274,7 @@ Fan-out makes this cheap. All the questions for one event go in **one** request 
 ```
 
 Design principles:
+
 - **Kernel = reducer over events.** `(state, event) → decisions → actions → new events`. Deterministic given the decision answers, so it can be replayed and tested with recorded answers.
 - **Decider is an interface, not a vendor.** Use the same question schema against hosted Jev, local Kev, or a cheap LLM with structured output as the fallback. That makes the "users who won't use a hosted provider" case a config value.
 - **Confidence ladders, not single thresholds.** High confidence → act. Medium → verify (a second question, more context, or an LLM judge). Low → the human. Risk sets the bar: reads are lenient, destructive calls strict.
@@ -289,6 +303,7 @@ Several projects already bolt Jev onto existing harnesses as **sidecars**. Your 
 `experiments/score_scales.py` covers a damage Score for shell commands, a complexity Score for model routing, and an urgency Score for background reports.
 
 ### Kev-0.8B
+
 | Family | Correct | Notes |
 |---|---|---|
 | intent | 7/8 | missed "add a --json flag" (called it chit-chat, conf 0.04) |
@@ -314,6 +329,7 @@ Several projects already bolt Jev onto existing harnesses as **sidecars**. Your 
 Thresholds marked "at t=" were picked on the same 12 items, so they're optimistic. AUC is the threshold-free measure.
 
 **Other distribution results:**
+
 | Decision | Type | Result |
 |---|---|---|
 | Model routing (complexity, 9 requests) | Score 0–2 | rank correlation 0.84; 8/9 tiers with in-sample cut points (0.77 / 1.17). The earlier 3-way Choice got 4/6 |
@@ -324,9 +340,11 @@ Thresholds marked "at t=" were picked on the same 12 items, so they're optimisti
 Caveat on Kev's Score `confidence`: it stayed at 0.7 for the near-flat `git push --force` distribution. Kev notes its confidence formula approximates TypeSafe's (which isn't public), so work from the level probabilities or tail mass rather than Kev's `confidence`.
 
 ### Kev-4B
+
 Downloaded (about 8 GB of bf16 weights) and served via MLX. On this 18 GB machine, alongside a normal desktop workload, it **thrashed swap** (27 of 28 GB used) and took about 80 s per request. I stopped it after 7 requests, so there are no accuracy numbers. Kev's README quotes 721 ms for 5 questions on an Apple M5 with 32 GB. **Practical takeaway:** on a laptop with 16–18 GB, Kev-0.8B is the local dev model. Kev-4B needs a 32 GB Mac, or a GPU box / Modal endpoint (scales to zero, about 35 s cold start).
 
 ### What the experiments say
+
 - Latency is a non-issue locally, even at 0.8B. A decision costs about 50 ms, which is invisible next to a multi-second LLM turn.
 - **Read the distribution, not just the top answer.** The same risk call went from 50% correct (argmax) to AUC 0.94 (group mass) and 0.97 (damage Score). Pick the question type to match the decision: Choice for *which*, Score for *how much*, Noul for *whether*. Then write the policy over the probabilities.
 - **Ordered questions should be Scores.** Damage and complexity both did best as Scores.
@@ -351,6 +369,7 @@ Measured locally (non-blank, non-comment source lines, excluding tests and vendo
 | **mini-swe-agent** | Python | ~4k (loop ~100) | MIT | `agents/default.py` | ✓ for **evals**: scores >74% on SWE-bench Verified with a trivial loop. Useful for A/B testing Jev decisions on benchmarks |
 
 **Recommendation: write the kernel from scratch and depend on commodity layers.**
+
 - *The kernel is the novel part and it's small.* It's an event log, a state builder, a Decider interface, a policy table and a worker supervisor. Forking would mean fighting someone else's LLM-driven loop to put Jev in charge. In all five big harnesses the LLM *is* the control flow, so you'd be inverting their core assumption.
 - *Don't rebuild provider plumbing.* `@earendil-works/pi-ai` (MIT) already handles the leaky provider abstractions. Optionally use `pi-tui` for the TUI and `pi-agent-core` as the *inner* LLM worker loop, driving its hooks from your kernel.
 - *Validate before you build.* A few days prototyping the §3 decisions as a **Pi extension or OpenCode plugin**, in shadow mode on your own daily work, gives you a real decision log and real thresholds before the kernel exists.
@@ -405,7 +424,7 @@ Measured locally (non-blank, non-comment source lines, excluding tests and vendo
 
 ## 11. Decisions (25 Sep 2026) and follow-ups
 
-Made in the proposal artifact (https://claude.ai/artifact/RiFnQgX1UYHARpjPgqG7qw):
+Made in the proposal artifact (<https://claude.ai/artifact/RiFnQgX1UYHARpjPgqG7qw>):
 
 | Decision | Choice |
 |---|---|
@@ -422,7 +441,9 @@ Made in the proposal artifact (https://claude.ai/artifact/RiFnQgX1UYHARpjPgqG7qw
 **What Go means.** Pi's TypeScript libraries are out. The Go replacements are Charm's [`fantasy`](https://github.com/charmbracelet/fantasy) (Apache-2.0, ~19k lines, the LLM layer under Crush, *not* under Crush's FSL). It supports Anthropic, OpenAI, Google, Bedrock, Azure, OpenRouter, Vercel and OpenAI-compatible providers, and has the hooks `PrepareStep`, `StopWhen`, `RepairToolCall`, `OnStepStart/Finish`, `OnToolCall` and `OnToolResult`. Also [`catwalk`](https://github.com/charmbracelet/catwalk) (MIT, model catalogue) and Bubble Tea / Lip Gloss / Bubbles (MIT, TUI). TypeSafe ships only Python and JS SDKs, and the API is one endpoint, so we write a small Go client. Kev is Python, so it runs as a managed local sidecar over HTTP.
 
 ### Cheaper alternatives to Jev?
+
 Jev's $0.042/Mtok input (output free) is effectively the floor for hosted System One models:
+
 - **OpenRouter** `typesafe/jev-1.13`: same price.
 - **Together AI Tev1-4B-experimental** (23 Sep): same price. A Qwen3.5-4B fine-tune that returns a letter. Not API-compatible, and there's no accuracy comparison with Jev.
 - **Cloudflare Workers AI** `typesafe/jev`: 10,000 free Neurons per day, then $0.011 per 1k Neurons. Jev's Neuron rate isn't published. If it's at parity with TypeSafe's price, that's about 2.6M free tokens a day (unverified). It's reported to work without a TypeSafe invite.
@@ -434,6 +455,7 @@ Estimated Girdle spend: 400 steps/day × 3 checks × 1.5k tokens ≈ 1.8M tokens
 Open follow-ups, added to the proposal as new decisions: which route to hosted Jev (OpenRouter recommended), and whether to run the gates in shadow mode first (recommended, since the Pi proof step was skipped).
 
 ### Update: Jev only (25 Sep 2026, later)
+
 From chat: "just use jev at $TYPESAFE_API_KEY". The route is TypeSafe direct, and the backend changed from "mixed" to **Jev for everything**, so Kev is no longer the default. The key is defined in `~/.zshrc` and verified (HTTP 200). It is *not* in the `launchctl` environment, so non-interactive processes need it passed in.
 
 **Hosted Jev (`jev-1.13`) vs Kev-0.8B**, on the same test sets (`experiments/jev_*.txt`):
@@ -452,6 +474,7 @@ From chat: "just use jev at $TYPESAFE_API_KEY". The route is TypeSafe direct, an
 | Latency from this Mac | ~47 ms | **~500 ms per request; a 6-question batch took 504 ms** |
 
 Design consequences:
+
 - One request per checkpoint (batching is free).
 - Run checks in parallel with LLM streaming.
 - Code rules decide the obvious cases, so they never wait on Jev.

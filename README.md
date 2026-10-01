@@ -1,117 +1,68 @@
+<p align="center">
+  <img src="docs/assets/girdle-banner.svg" alt="Girdle — the LLM does the work, Jev judges checkpoints, code owns the loop" width="1200">
+</p>
+
 # Girdle
 
-An agent you can leave alone: a terminal coding agent that keeps working when it should, stops exactly when it needs you, and never claims to be done when it isn't.
+A terminal coding agent with a Go control loop and [Jev](https://docs.typesafe.ai) decision checkpoints. The LLM plans, edits and runs tools; Jev judges progress, completion and risky shell commands; code applies the decisions and records them.
 
-The LLM decides and does the work. [Jev](https://docs.typesafe.ai), a calibrated decision model, judges meaning at checkpoints around every step. Code owns the loop.
+The goal is **an agent you can leave alone**. This is an experimental implementation: its completion checks are probabilistic, and the benchmark records both successful runs and false completions.
 
-## Try it
+## Get started
 
-Girdle needs `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY` in the environment. It works best with [ast-grep](https://ast-grep.github.io) installed (`brew install ast-grep`), which Girdle uses to parse code and shell commands.
+You need **Go 1.27.0 or newer**, Bash, and API keys for [OpenRouter](https://openrouter.ai/settings/keys) and [TypeSafe](https://docs.typesafe.ai). Normal use runs on Linux and macOS. Install [ast-grep](https://ast-grep.github.io/guide/quick-start) for structural code lookup and the shell tripwire's code checks.
 
 ```bash
+git clone https://github.com/timbrinded/girdle.git
+cd girdle
 go build -o bin/girdle ./cmd/girdle
-bin/girdle                           # TUI in the current directory
-bin/girdle -p "fix the failing test" # headless: exits when done (0), or when it needs you (2)
+
+export OPENROUTER_API_KEY='your-openrouter-key'
+export TYPESAFE_API_KEY='your-typesafe-key'
+
+bin/girdle -C /path/to/project                          # interactive TUI
+bin/girdle -C /path/to/project -p "fix the failing test" # headless
 ```
 
-The default model is `stealth/space-bunny-alpha` on OpenRouter. It's free for now, and the fast flow is measured and tuned on it. It is an anonymous model whose provider may log prompts, so use it on public code only. It may also be withdrawn without notice. For private code, pick another in the model picker, or with `-model` or `GIRDLE_MODEL`, for example `meta/muse-spark-1.3-contributor` ([decision 0021](docs/decisions/0021-default-model.md)).
+The configured fallback model is `stealth/space-bunny-alpha`. Treat it as a public-code choice: it is an anonymous model whose data policy and availability may change. Choose another model with `-model` or the TUI picker after checking the provider's data policy. Jev also receives task, code and tool-result context. See [security and data handling](SECURITY.md).
 
-### Models and reasoning effort
+[Installation and first run](docs/getting-started.md) covers installing on your PATH and resolving setup errors.
 
-In the TUI, `ctrl+l` (or `/model [search]`) opens the model picker. It lists every model your OpenRouter key can use that takes tool calls. Your models come first, and each row shows its price, context size and the reasoning efforts it accepts. Type to search.
-- `enter` switches to the highlighted model from the next request, and adds it to your models.
-- `ctrl+f` adds a model to your models, or removes it. Removing the model in use, or the default, hands its place to your most recently picked model.
-- `ctrl+s` makes the highlighted model, and the current effort, what new sessions start with, headless runs included. Without a saved default, Girdle starts on the model you picked last. `-model`, `GIRDLE_MODEL`, `-reasoning` and `-no-route` still override them.
-- `tab` lists the efforts for the current model.
+## How it works
 
-Outside the picker:
-- `ctrl+p` steps through your models.
-- `shift+tab` steps the reasoning effort, independently of the model: `auto`, where Jev chooses per request, then each effort the model accepts.
-- `/effort [level]` sets the effort or lists the choices.
-- `/model <id> [effort]` switches directly.
+Girdle checks what happens around the LLM's tool loop. At a turn end, Jev can end the request, nudge the agent to continue, or return control to you. Decisions and their evidence go into a local JSONL log.
 
-A pinned effort the model doesn't accept is sent as the nearest one it does. If your key can no longer use a model, Girdle switches to the most recently picked one it can. See [decision 0023](docs/decisions/0023-model-picker.md).
-
-Useful flags:
-- `-C dir`, `-model`, `-reasoning` and `-log path`.
-- `-json`: headless events as JSON lines.
-- `-no-checkpoints`: turn Jev off.
-- `-jev zen`: call [OpenCode Zen](https://opencode.ai/docs/zen)'s free Jev with `ZEN_API_KEY`. It matches the pinned model within its own noise ([decision 0017](docs/decisions/0017-opencode-zen.md)).
-
-Every shell command passes a tripwire first. ast-grep parses the command, and code blocks what can never be allowed: recursive deletes outside the project, force-pushes to a shared branch, and secrets sent off the machine. Commands that delete, push and send nothing run at once. Jev judges the rest. A blocked command hands the run back to you. `-tripwire=false` turns it off. See [decision 0014](docs/decisions/0014-ast-grep-with-jev.md).
-
-Every session writes an event log, including each Jev decision, to `~/.local/state/girdle/sessions/`.
-
-## The fast flow
-
-`-fast` turns on the fast flow, built to take as few LLM steps as it can:
-
-- **The repository goes out with the request.** For a large repository, the request carries the code it names. Jev also picks the other files it will need, one isolated question per file, skipping test data.
-- **Changes arrive in one step.** One `apply` call makes every change and runs a check.
-- **Searches come with context.** A search result names the definition each match sits in, and shows it when there are few.
-- **Jev ends the run as soon as the check's result shows the task done.** It reads the changes and the check's output. When a request renames or removes something, Girdle doesn't stop while the old name is still there.
-- **An independent test runs alongside.** A second call writes a test from the task's words, and Girdle runs it once the agent's own check passes.
-
-Any part can be left out by setting its flag to false, for example `-fast -crosscheck=false`.
-
-One part is bought speed, not design: each LLM call is raced three times, and the first answer wins.
-
-Results so far, all side by side with the same model:
-
-- **Muse Spark, small and scale suites.**
-  - Warm (a reused, warmed directory, as in daily use): twice as fast as the default flow, at the same pass rate.
-  - Cold, on real repositories: 1.24 times as fast.
-  - See [research/06](research/06-optimisation-stage-summary.md) and decisions [0005](docs/decisions/0005-fast-flow.md) to [0013](docs/decisions/0013-jev-fan-out.md).
-- **Space Bunny, the hard suite's development tasks, warm.**
-  - 83 of 99 runs passed. The median passing run took 64 s, at about $0.003 a run: only Jev is paid.
-  - Grep context cut steps by 19% and time to 0.87 there. On the held-out tasks it was neutral.
-  - Not yet measured cold on this model.
-  - See decisions [0019](docs/decisions/0019-harness-time.md) and [0020](docs/decisions/0020-round-trips.md).
-- **Where the time goes on Space Bunny.** LLM steps are 86% of a passing run, and each step costs about 2 s before it writes anything. So fewer steps is the lever that works. Showing the model more code up front made no difference.
-
-## Benchmark
-
-`bench/` runs agents on tasks with hidden tests and scores them the way SWE-bench does:
+`-fast` enables a flow designed to reduce LLM round trips: repository context with the request, batched lookup and edits, checks after edits, and earlier completion decisions. It also attempts an independent test of the request. The first main LLM call races three copies; later calls start extra copies after a three-second hedge. Racing can increase usage and spend.
 
 ```bash
-bench/validate.sh                 # every task fails untouched and passes its reference fix
-bench/gate.sh                     # Segment 1 gate scenarios
-
-# A new idea: the fast flow against the fast flow with the idea, warm, on the tasks it targets.
-# Any Girdle flag goes after a +, so girdle-fast+crosscheck=false is an ablation.
-bench/bench.sh -w -s hard -a "girdle-fast girdle-fast+grepctx=false" -r 3
-python3 bench/compare.py bench/results/<run> girdle-fast girdle-fast+grepctx=false
-
-# Two builds side by side: girdle-fast@base runs bin/girdle-base.
-bench/bench.sh -w -s holdout -a "girdle-fast@base girdle-fast" -r 2
+bin/girdle -fast -C /path/to/project -p "fix the failing test"
+bin/girdle -fast -crosscheck=false -p "update the README"
 ```
 
-The suites:
+The shell tripwire is enabled by default. It parses commands with ast-grep where available and uses Jev for decisions that need judgement. It is a guard on shell commands; ordinary sessions run with your filesystem and network access. See the [architecture](docs/architecture.md) and [security policy](SECURITY.md) for the boundaries.
 
-| Suite | Tasks |
-|---|---|
-| `tasks` | Small fixtures |
-| `scale` (`-s scale`) | Six tasks on real repositories (goldmark, more-itertools) |
-| `hard` (`-s hard`) | 11 development tasks rebuilt from real fix commits, checked by the commits' own hidden tests ([decision 0015](docs/decisions/0015-hard-suite.md)) |
-| `holdout` (`-s holdout`) | 22 tasks that are never used for tuning, run only at milestones ([decision 0016](docs/decisions/0016-no-benchmark-fitting.md)) |
+## Documentation
 
-Upstream repositories are named in a task's `source` file and cloned once into `bench/.cache`, so their code is never vendored here.
+| Guide | Contents |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Requirements, installation, first run and troubleshooting |
+| [Usage](docs/usage.md) | TUI controls, models, headless exits and session logs |
+| [Configuration](docs/configuration.md) | Every CLI flag, environment variables and saved settings |
+| [Architecture](docs/architecture.md) | Session lifecycle, tools, checkpoints and failure behavior |
+| [Benchmarks](docs/benchmarks.md) | Task validation, live runs, isolation and result interpretation |
+| [Contributing](CONTRIBUTING.md) | Development checks and evidence for changes |
+| [Decision history](docs/decisions/README.md) | Design choices and dated experiments |
+| [Research](research/README.md) | Measurements and retained experiment scripts |
 
-`bench/compare.py` gives the verdict:
+## Evidence so far
 
-- time over passing runs only, since a false "done" is fast;
-- a 95% interval across tasks;
-- pass counts;
-- tool calls per passing run;
-- fresh tokens, so that speed bought with compute is named as such.
+The recorded experiments cover small fixtures and tasks reconstructed from open-source fixes. They are evidence for those task sets, models and conditions.
 
-Two identical builds have measured 16% apart on time, so keep nothing on a single round.
+- On Muse Spark, the September 2026 warm comparisons measured roughly twice the speed of the default flow at the same observed pass rate. The cold comparison on real repositories measured 1.24×. See the [stage summary](research/06-optimisation-stage-summary.md).
+- On Space Bunny's development tasks, grep context reduced tool calls by 19% and produced a candidate/baseline time ratio of 0.87 over passing runs. The held-out comparison was neutral: ratio 1.01, with 39/44 passes in each arm. See [decision 0020](docs/decisions/0020-round-trips.md).
 
-The benchmark's defaults:
+The [benchmark guide](docs/benchmarks.md) explains passing-only timing, warm and cold runs, cost estimates and measured noise. Girdle benchmark runs require **macOS** because their shell isolation uses `sandbox-exec`.
 
-- **Model.** Space Bunny, free and public code only. Override with `BENCH_MODEL`, `BENCH_PROVIDER` and `BENCH_JEV`.
-- **Isolation.** Girdle's shell commands run offline (`-offline-tools`). They can't read other copies of the code under test anywhere on disk (`-deny-read`): the benchmark's clones, the Go module cache, other projects' `vendor/` and `site-packages`. Agents do go looking for the upstream fix ([decisions 0018](docs/decisions/0018-space-bunny-offline-tools.md) and [0019](docs/decisions/0019-harness-time.md)).
+## License
 
-Early and private. See [CLAUDE.md](CLAUDE.md) for the North Star and how we work, and [research/](research/) for the background.
-
-Licensed under Apache-2.0.
+[Apache-2.0](LICENSE). Benchmark patches and tests derived from upstream projects retain their respective licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

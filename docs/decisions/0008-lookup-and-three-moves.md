@@ -3,10 +3,12 @@
 **Date:** 2026-09-26 · **Branch:** `feat/scale-bench`
 
 **Context:** After 0007 the fast flow passed the scale suite, but it was only about 12% faster than the default flow, and slower on gm-strike-tag. The traces showed two sources of extra steps:
+
 - **Exploration one item per step.** The model read or searched one thing, waited about 2 to 4 s, and read the next.
 - **Verification after a correct fix.** After fixing a symptom-only bug, the check ran the existing suite. That didn't show the symptom gone, so Jev's step-end check said "not complete". The model then wrote throwaway programs to show it, averaging 4.8 extra bash calls on gm-heading-close.
 
 **Decision:**
+
 - **One lookup tool.** In the fast flow, `lookup` replaces `read`, `search` and `definition`. It takes lists of files or line ranges (`path:START-END`), definitions and searches, and returns them all in one call, capped at 120 KB.
 - **Three moves.** The fast prompt frames the work as gather, change and fix: one lookup with everything needed, one apply with every change and a check that proves the whole task, and a further apply only if the check fails.
 - **A regression test with every bug fix.** When the task reports a bug, the fix and a test that reproduces the report go in the same apply. The check's output then shows the fix, and Jev can stop the run at once.

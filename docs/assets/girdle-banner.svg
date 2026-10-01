@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">Girdle</title>
+  <desc id="desc">A terminal coding agent. The LLM does the work, Jev judges checkpoints, and code owns the loop.</desc>
+  <rect width="1200" height="320" rx="20" fill="#f5f2e9"/>
+  <path d="M48 272h1104" stroke="#d9d7ca" stroke-width="2"/>
+  <g transform="translate(48 42) scale(.48)">
+    <path d="M185 69a83 83 0 1 0 18 96" fill="none" stroke="#285c48" stroke-width="28" stroke-linecap="square"/>
+    <path d="M128 128h94" fill="none" stroke="#bd5637" stroke-width="28"/>
+    <rect x="160" y="108" width="42" height="40" rx="3" fill="#f5f2e9" stroke="#202822" stroke-width="9"/>
+    <path d="M181 115v26" fill="none" stroke="#202822" stroke-width="7"/>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif" fill="#202822">
+    <text x="188" y="142" font-size="88" font-weight="700" letter-spacing="-4">Girdle</text>
+    <text x="62" y="207" font-size="28">A terminal coding agent</text>
+    <text x="62" y="243" font-size="28">with decision checkpoints.</text>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <rect x="802" y="42" width="350" height="60" rx="8" fill="#202822"/>
+    <text x="824" y="80" font-size="21" font-weight="700" fill="#f5f2e9">LLM</text>
+    <text x="910" y="80" font-size="21" fill="#f5f2e9">does the work</text>
+    <rect x="802" y="116" width="350" height="60" rx="8" fill="#285c48"/>
+    <text x="824" y="154" font-size="21" font-weight="700" fill="#fff">Jev</text>
+    <text x="910" y="154" font-size="21" fill="#fff">judges checkpoints</text>
+    <rect x="802" y="190" width="350" height="60" rx="8" fill="#bd5637"/>
+    <text x="824" y="228" font-size="21" font-weight="700" fill="#fff">Code</text>
+    <text x="910" y="228" font-size="21" fill="#fff">owns the loop</text>
+  </g>
+  <text x="62" y="301" font-family="DejaVu Sans Mono, monospace" font-size="16" letter-spacing="2" fill="#566056">OPEN SOURCE · GO · TERMINAL</text>
+  <path d="M1105 291h35m-9-9 9 9-9 9" fill="none" stroke="#285c48" stroke-width="3"/>
+</svg>
