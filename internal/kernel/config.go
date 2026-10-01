@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"time"
@@ -105,6 +106,13 @@ type Config struct {
 	// GrepContext adds to search results the definitions the matches are
 	// in, and shows them when there are few.
 	GrepContext bool
+
+	// OpenModel opens model id, with the efforts it accepts, for the girdle
+	// tool's model switch. Nil means the model can't be switched that way.
+	OpenModel func(ctx context.Context, id string) (fantasy.LanguageModel, []checkpoint.Effort, error)
+	// SaveDefaults saves a model and effort setting ("auto" or an effort)
+	// as what new sessions start with. Nil means they can't be saved.
+	SaveDefaults func(model, effort string) error
 }
 
 // resolved turns off every feature whose prerequisites are off, so the rest

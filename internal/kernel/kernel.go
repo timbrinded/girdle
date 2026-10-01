@@ -39,6 +39,10 @@ const (
 type Session struct {
 	ID  string
 	cfg Config
+	// want holds the features as asked for, before cfg turned off those
+	// whose prerequisites are off. The girdle tool changes it, and the next
+	// request takes it (applyFeatures).
+	want Config
 	// next holds settings Configure left for the next request.
 	next atomic.Pointer[Settings]
 	// canAuto is set when Jev can choose request efforts.
@@ -122,14 +126,10 @@ func (s *Session) stopTurn(h halt) {
 
 // NewSession builds a session with the built-in tools and the girdle tool.
 func NewSession(cfg Config) *Session {
-	cfg = cfg.resolved()
-	s := &Session{ID: uuid.New().String(), cfg: cfg, canAuto: cfg.canAutoEffort(), edited: map[string]bool{}}
-	if cfg.Batch {
-		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
-	} else {
-		s.tools = tools.All(cfg.Dir, s.toolOptions())
-	}
-	s.tools = append(s.tools, s.girdleTool())
+	s := &Session{ID: uuid.New().String(), want: cfg, cfg: cfg.resolved(), edited: map[string]bool{}}
+	s.canAuto = s.cfg.canAutoEffort()
+	cfg = s.cfg
+	s.buildTools()
 	s.useModel()
 	meta := cfg.features()
 	meta["jev_model"] = jevModel(cfg.Jev)
@@ -138,6 +138,16 @@ func NewSession(cfg Config) *Session {
 	maps.Copy(meta, s.settingsMeta())
 	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	return s
+}
+
+// buildTools gives the session the tools its features call for.
+func (s *Session) buildTools() {
+	if s.cfg.Batch {
+		s.tools, s.resetTools = tools.BatchedWithReset(s.cfg.Dir, s.cfg.Reproduce, s.toolOptions())
+	} else {
+		s.tools, s.resetTools = tools.All(s.cfg.Dir, s.toolOptions()), nil
+	}
+	s.tools = append(s.tools, s.girdleTool())
 }
 
 // Usage returns the tokens used so far.

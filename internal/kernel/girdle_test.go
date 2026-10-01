@@ -99,3 +99,65 @@ func TestGirdleQuestion(t *testing.T) {
 		})
 	}
 }
+
+// configModel calls the girdle tool with input until a tool result is in
+// the conversation, then answers.
+type configModel struct {
+	fantasy.LanguageModel
+	input string
+}
+
+func (m configModel) Stream(_ context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	for _, msg := range call.Prompt {
+		if msg.Role == fantasy.MessageRoleTool {
+			return (&answerModel{}).Stream(context.Background(), call)
+		}
+	}
+	return func(yield func(fantasy.StreamPart) bool) {
+		if yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeToolCall, ID: "call-1", ToolCallName: "girdle", ToolCallInput: m.input}) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonToolCalls})
+		}
+	}, nil
+}
+
+// The girdle tool changes settings, from the next request, only when Jev
+// reads the user's request as about Girdle, and never the safety floor.
+func TestGirdleConfigure(t *testing.T) {
+	const change = `{"effort":"high","turn_on":["heartbeat"]}`
+	for _, c := range []struct {
+		name   string
+		girdle float64 // Jev's P(girdle) for the user's request
+		input  string
+		want   bool // the change is made
+	}{
+		{"asked for by the user", 0.9, change, true},
+		{"asked for by the model during other work", 0, change, false},
+		{"lowering the floor", 0.9, `{"turn_off":["tripwire"]}`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var refused bool
+			s := NewSession(Config{
+				Model: configModel{input: c.input}, ModelName: "config", Dir: t.TempDir(),
+				Jev:    fakeJev(t, map[string]float64{"subject_girdle": c.girdle}),
+				Policy: checkpoint.DefaultPolicy, Checkpoints: true, Tripwire: true,
+				Route: true, AutoEffort: true, Efforts: checkpoint.Efforts, Effort: checkpoint.EffortLow, RoutePolicy: checkpoint.DefaultRoutePolicy,
+				EffortOptions: func(e checkpoint.Effort) fantasy.ProviderOptions { return fantasy.ProviderOptions{string(e): nil} },
+				Emit: func(e Event) {
+					refused = refused || e.Type == EventToolResult && e.Tool == "girdle" && e.IsError
+				},
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			s.Run(ctx, "Use high reasoning effort and turn on the heartbeat.")
+			if s.cfg.Effort != checkpoint.EffortLow || s.cfg.Heartbeat {
+				t.Fatal("a change took effect during the request that made it")
+			}
+			s.Run(ctx, "Thanks.")
+			made := s.cfg.Effort == checkpoint.EffortHigh && !s.cfg.AutoEffort && s.cfg.Heartbeat
+			if made != c.want || refused == c.want || !s.cfg.Tripwire {
+				t.Fatalf("made = %v, refused = %v, tripwire = %v; want made = %v", made, refused, s.cfg.Tripwire, c.want)
+			}
+		})
+	}
+}

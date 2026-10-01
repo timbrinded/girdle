@@ -24,6 +24,7 @@ const (
 	EventDecision      EventType = "decision"
 	EventRoute         EventType = "route"
 	EventSettings      EventType = "settings"   // the model or reasoning effort changed, from this request on
+	EventConfigure     EventType = "configure"  // the girdle tool changed settings, for the next request
 	EventSnapshot      EventType = "snapshot"   // files sent with a request
 	EventStep          EventType = "step"       // one LLM call: timing and usage
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies
@@ -54,6 +55,9 @@ type Event struct {
 	Usage    *Usage                    `json:"usage,omitempty"`
 	Decision *checkpoint.Decision      `json:"decision,omitempty"`
 	Route    *checkpoint.RouteDecision `json:"route,omitempty"`
+	// Settings is set on configure events: the next request's settings, for
+	// the TUI to show and keep. Meta logs the change.
+	Settings *Settings `json:"-"`
 	// Effort is set on route events: the reasoning effort the request's LLM
 	// calls use, after any pin and fitting it to the model.
 	Effort checkpoint.Effort `json:"effort,omitempty"`

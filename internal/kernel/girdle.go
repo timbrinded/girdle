@@ -30,16 +30,22 @@ var routedTopics = []string{"usage", "configuration"}
 
 var girdleDescription = func() string {
 	var b strings.Builder
-	b.WriteString("Answer questions about Girdle, the coding agent you are running in, from this build rather than from memory or the repository. Returns this session's facts (version, model, reasoning effort, Jev, features on), then the guides you ask for:")
+	b.WriteString("Answer questions about Girdle, the coding agent you are running in, from this build rather than from memory or the repository, and change its settings when the user asks. Returns any changes made, this session's facts (version, model, reasoning effort, Jev, features on), then the guides you ask for:")
 	for _, t := range slices.Sorted(maps.Keys(girdleTopics)) {
 		fmt.Fprintf(&b, "\n- %s: %s", t, girdleTopics[t])
 	}
+	b.WriteString("\nSettings changes take effect from the user's next request.")
 	return b.String()
 }()
 
-// GirdleInput is the girdle tool's input.
+// GirdleInput is the girdle tool's input. Every field is optional.
 type GirdleInput struct {
-	Topics []string `json:"topics,omitempty" description:"Guides to include, by topic. Without any, only this session's facts are returned."`
+	Topics      []string `json:"topics,omitempty" description:"Guides to include, by topic. Without any, only this session's facts are returned."`
+	Model       string   `json:"model,omitempty" description:"Switch to this model ID at the session's provider, as the model picker and the facts show IDs."`
+	Effort      string   `json:"effort,omitempty" description:"Set the reasoning effort: auto, where Jev chooses for each request, or none, minimal, low, medium, high, xhigh or max."`
+	TurnOn      []string `json:"turn_on,omitempty" description:"Features to turn on: snapshot, prefetch, batch, early_stop, stepfan, speculate, crosscheck, heartbeat, compact, reproduce, leftovers or grepctx. The configuration guide says what each does."`
+	TurnOff     []string `json:"turn_off,omitempty" description:"Features to turn off, from the same list."`
+	SaveDefault bool     `json:"save_default,omitempty" description:"Save the model and effort, after any change here, as what new sessions start with."`
 }
 
 // Nudge texts that carry the girdle tool's answer to the LLM.
@@ -49,13 +55,21 @@ const (
 )
 
 func (s *Session) girdleTool() fantasy.AgentTool {
-	return fantasy.NewAgentTool("girdle", girdleDescription, func(_ context.Context, in GirdleInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	return fantasy.NewAgentTool("girdle", girdleDescription, func(ctx context.Context, in GirdleInput, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 		for _, t := range in.Topics {
 			if _, ok := girdleTopics[t]; !ok {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("unknown topic %q: choose from %s", t, strings.Join(slices.Sorted(maps.Keys(girdleTopics)), ", "))), nil
 			}
 		}
-		return fantasy.NewTextResponse(s.aboutGirdle(in.Topics)), nil
+		var changed string
+		if in.Model != "" || in.Effort != "" || len(in.TurnOn)+len(in.TurnOff) > 0 || in.SaveDefault {
+			var err error
+			if changed, err = s.configure(ctx, in); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			changed = "=== changes\n" + changed + "\n\n"
+		}
+		return fantasy.NewTextResponse(changed + s.aboutGirdle(in.Topics)), nil
 	})
 }
 

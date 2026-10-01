@@ -345,6 +345,13 @@ func (m *model) handleEvent(e kernel.Event) {
 		m.appendLine(decisionStyle.Render("◆ cross-check " + e.Reason))
 	case kernel.EventNudge:
 		m.appendLine(dimStyle.Render("↻ nudged (" + e.Reason + ")"))
+	case kernel.EventConfigure:
+		// The session changed its own settings: keep them, so the next
+		// change made here starts from them.
+		if e.Settings != nil {
+			m.settings = *e.Settings
+		}
+		m.appendLine(dimStyle.Render("◇ " + e.Text))
 	case kernel.EventRunEnd:
 		m.flushStreaming()
 		style := doneStyle

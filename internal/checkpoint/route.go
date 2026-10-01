@@ -33,10 +33,10 @@ var RouteQuestions = map[string]jev.Question{
 	"subject": jev.Choice(
 		"What does `request` ask Girdle, the coding agent it is sent to, for?",
 		map[string]string{
-			SubjectChange:       "Work on the code or the machine: change, fix, add, build, test or run something",
+			SubjectChange:       "Work on the code or the machine in the working directory: change, fix, add, build, test or run something",
 			SubjectCode:         "Only an answer about the code, the repository or the project in the working directory",
 			SubjectConversation: "Only an answer about this conversation: what the agent did, changed, found or decided so far, or why",
-			SubjectGirdle:       "Only an answer about Girdle itself: how to use or configure it, its models, reasoning effort, keys, flags, commands, features or how it decides things",
+			SubjectGirdle:       "Girdle itself: a question about how to use or configure it, its models, reasoning effort, keys, flags, commands, features or how it decides things, or a change to its own settings, such as switching its model or effort or turning a feature on",
 		},
 	),
 }
