@@ -126,3 +126,5 @@ The dated [stage summary](../research/06-optimisation-stage-summary.md) covers M
 Identical builds measured 16% apart in one recorded comparison. Preserve the model, commits, concurrency, repetitions, warm/cold mode, failures and exclusions in a report, and repeat an apparent improvement before retaining it. Historical reports keep the methodology used at the time; later rules do not silently rescore them.
 
 The original run corpus is not bundled. [Research experiments](../research/experiments/README.md) retain the analysis methods and input requirements, rather than a replayable copy of every original measurement.
+
+The README's [benchmark plots](plots/README.md) redraw the stage summary and decision 0020 from sourced CSVs using a pinned Matplotlib script. Plot generation works on Linux and macOS, requires no provider keys, and preserves the historical summaries' statistics.

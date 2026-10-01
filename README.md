@@ -58,10 +58,15 @@ The shell tripwire is enabled by default. It parses commands with ast-grep where
 
 The recorded experiments cover small fixtures and tasks reconstructed from open-source fixes. They are evidence for those task sets, models and conditions.
 
-- On Muse Spark, the September 2026 warm comparisons measured roughly twice the speed of the default flow at the same observed pass rate. The cold comparison on real repositories measured 1.24×. See the [stage summary](research/06-optimisation-stage-summary.md).
-- On Space Bunny's development tasks, grep context reduced tool calls by 19% and produced a candidate/baseline time ratio of 0.87 over passing runs. The held-out comparison was neutral: ratio 1.01, with 39/44 passes in each arm. See [decision 0020](docs/decisions/0020-round-trips.md).
+On Muse Spark 1.3 Contributor, the September 2026 warm comparisons measured roughly twice the speed of the default flow at the same observed pass rate. The cold comparison on real repositories measured 1.24×. See the [stage summary](research/06-optimisation-stage-summary.md).
 
-The [benchmark guide](docs/benchmarks.md) explains passing-only timing, warm and cold runs, cost estimates and measured noise. Girdle benchmark runs require **macOS** because their shell isolation uses `sandbox-exec`.
+![Warm Muse Spark comparisons: small fixtures averaged 38.8 seconds for default and 19.4 for fast, with 39/39 passes each; real repositories averaged 66.2 and 33.2 seconds, with 18/18 passes each.](docs/assets/benchmark-warm-flow.svg)
+
+Space Bunny's grep-context experiment compared an addition to the existing fast flow. On passing development runs, tool calls averaged 13.7 with grep context versus 17.1 for the existing fast flow; the time ratio was 0.87. The speed improvement was not confirmed on held-out tasks: ratio 1.01, with 39/44 passes in each arm. See [decision 0020](docs/decisions/0020-round-trips.md).
+
+![Grep context versus the existing fast flow: development time ratio 0.87 with a 95% interval of 0.78–0.98 and 83/99 versus 82/99 passes; held-out ratio 1.01 with an interval of 0.87–1.20 and 39/44 passes each. Ratios below 1 favor grep context.](docs/assets/benchmark-grep-context.svg)
+
+The [data and Matplotlib script](docs/plots/README.md) regenerate these figures from the dated summaries. The [benchmark guide](docs/benchmarks.md) explains passing-only timing, warm and cold runs, cost estimates and measured noise. Live Girdle benchmark runs require **macOS** because their shell isolation uses `sandbox-exec`.
 
 ## License
 

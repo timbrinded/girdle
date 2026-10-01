@@ -1,0 +1,3 @@
+suite,label,tasks,model,conditions,baseline,candidate,baseline_mean_seconds,candidate_mean_seconds,baseline_passed,baseline_runs,candidate_passed,candidate_runs,date_start,date_end,source
+tasks,Small fixtures,13,Muse Spark 1.3 Contributor,warm,Default flow,Fast flow,38.8,19.4,39,39,39,39,2026-09-26,2026-09-27,research/06-optimisation-stage-summary.md#headline
+scale,Real repositories,6,Muse Spark 1.3 Contributor,warm,Default flow,Fast flow,66.2,33.2,18,18,18,18,2026-09-26,2026-09-27,research/06-optimisation-stage-summary.md#headline
