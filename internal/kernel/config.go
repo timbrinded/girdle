@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"fmt"
 	"regexp"
 	"time"
 
@@ -125,6 +126,28 @@ func (c Config) resolved() Config {
 		c.MaxStepsPerTurn = 60
 	}
 	return c
+}
+
+// features records which features are on, by name, for the log and the
+// girdle tool.
+func (c Config) features() map[string]string {
+	return map[string]string{
+		"checkpoints": fmt.Sprint(c.Checkpoints),
+		"route":       fmt.Sprint(c.Route),
+		"snapshot":    fmt.Sprint(c.Snapshot),
+		"batch":       fmt.Sprint(c.Batch),
+		"early_stop":  fmt.Sprint(c.EarlyStop),
+		"speculate":   fmt.Sprint(c.Speculate),
+		"crosscheck":  fmt.Sprint(c.CrossCheck),
+		"heartbeat":   fmt.Sprint(c.Heartbeat),
+		"compact":     fmt.Sprint(c.Compact),
+		"prefetch":    fmt.Sprint(c.Prefetch),
+		"stepfan":     fmt.Sprint(c.StepPolicy.Fanout),
+		"reproduce":   fmt.Sprint(c.Reproduce),
+		"tripwire":    fmt.Sprint(c.Tripwire),
+		"leftovers":   fmt.Sprint(c.Leftovers),
+		"grepctx":     fmt.Sprint(c.GrepContext),
+	}
 }
 
 // canAutoEffort reports whether Jev can choose request efforts.

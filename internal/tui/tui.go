@@ -331,7 +331,11 @@ func (m *model) handleEvent(e kernel.Event) {
 	case kernel.EventRoute:
 		if r := e.Route; r != nil {
 			m.routed = e.Effort
-			m.appendLine(decisionStyle.Render(fmt.Sprintf("◆ jev · complexity %.2f · %s reasoning · %dms", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)))
+			line := fmt.Sprintf("◆ jev · complexity %.2f · %s reasoning", r.Score, cmp.Or(string(e.Effort), "no"))
+			if h := r.Handling(); h != "" {
+				line += " · " + h
+			}
+			m.appendLine(decisionStyle.Render(fmt.Sprintf("%s · %dms", line, r.LatencyMS)))
 		}
 	case kernel.EventHeartbeat:
 		if h := e.Heartbeat; h != nil && h.Action != checkpoint.Continue {

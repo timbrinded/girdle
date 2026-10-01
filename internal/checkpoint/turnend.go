@@ -177,8 +177,10 @@ func (h History) Total() int {
 }
 
 // Decide maps Jev's answers to an action. It returns the rule that fired
-// and, for a nudge, the message to send.
-func (p Policy) Decide(a map[string]jev.Answer, h History, requirements []string) (Action, string, string) {
+// and, for a nudge, the message to send. answer is set when the request only
+// wants an answer (RouteDecision.Answer): there is no work to verify, so
+// "done" needs no test evidence.
+func (p Policy) Decide(a map[string]jev.Answer, h History, requirements []string, answer bool) (Action, string, string) {
 	status := a["status"]
 	if h.Total() >= p.MaxNudges {
 		return Ask, "nudge_budget_spent", ""
@@ -188,7 +190,7 @@ func (p Policy) Decide(a map[string]jev.Answer, h History, requirements []string
 	}
 	switch status.Choice {
 	case "done":
-		if a["evidence"].Noul < p.Evidence && h["verify"] == 0 {
+		if !answer && a["evidence"].Noul < p.Evidence && h["verify"] == 0 {
 			return Nudge, "verify", NudgeVerify
 		}
 		if h["coverage"] == 0 {
@@ -203,6 +205,9 @@ func (p Policy) Decide(a map[string]jev.Answer, h History, requirements []string
 			if len(missing) > 0 {
 				return Nudge, "coverage", coverageNudge(missing)
 			}
+		}
+		if answer {
+			return Stop, "answered", ""
 		}
 		return Stop, "done", ""
 	case "in_progress":
@@ -230,13 +235,13 @@ func coverageNudge(missing []string) string {
 
 // TurnEnd asks Jev about the end of a turn and applies the policy. If Jev is
 // unreachable it hands control to the user rather than guessing.
-func TurnEnd(ctx context.Context, c *jev.Client, s TurnState, p Policy, h History) Decision {
+func TurnEnd(ctx context.Context, c *jev.Client, s TurnState, p Policy, h History, answer bool) Decision {
 	d := Decision{Checkpoint: "turn_end", State: s}
 	var ok bool
 	if d.Call, ok = ask(ctx, c, s, TurnEndQuestions(s.Requirements)); !ok {
 		d.Action, d.Rule = Ask, "jev_unavailable"
 		return d
 	}
-	d.Action, d.Rule, d.Nudge = p.Decide(d.Answers, h, s.Requirements)
+	d.Action, d.Rule, d.Nudge = p.Decide(d.Answers, h, s.Requirements, answer)
 	return d
 }

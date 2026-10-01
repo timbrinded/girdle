@@ -396,7 +396,11 @@ func headlessPrinter(asJSON bool) func(kernel.Event) {
 			fmt.Printf("◆ jev %s: %s (%s) %dms\n", d.Checkpoint, d.Action, d.Rule, d.LatencyMS)
 		case kernel.EventRoute:
 			r := e.Route
-			fmt.Printf("◆ jev route: complexity %.2f → %s effort %dms\n", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)
+			handling := ""
+			if h := r.Handling(); h != "" {
+				handling = ", " + h
+			}
+			fmt.Printf("◆ jev route: complexity %.2f → %s effort%s %dms\n", r.Score, cmp.Or(string(e.Effort), "no"), handling, r.LatencyMS)
 		case kernel.EventNudge:
 			fmt.Printf("↻ %s\n", e.Text)
 		case kernel.EventError:

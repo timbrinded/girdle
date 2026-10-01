@@ -38,7 +38,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			action, rule, text := p.Decide(c.a, c.h, nil)
+			action, rule, text := p.Decide(c.a, c.h, nil, false)
 			if action != c.action || rule != c.rule || (text != "") != c.hasText {
 				t.Fatalf("Decide = (%s, %s, %q), want (%s, %s, text=%v)", action, rule, text, c.action, c.rule, c.hasText)
 			}
@@ -52,15 +52,15 @@ func TestDecideCoverage(t *testing.T) {
 	a["req_0"] = jev.Answer{Type: "noul", Noul: 0.9}
 	a["req_1"] = jev.Answer{Type: "noul", Noul: 0.2}
 
-	action, rule, text := DefaultPolicy.Decide(a, History{}, reqs)
+	action, rule, text := DefaultPolicy.Decide(a, History{}, reqs, false)
 	if action != Nudge || rule != "coverage" || !strings.Contains(text, "add a test for the flag") || strings.Contains(text, "- add the flag\n") {
 		t.Fatalf("got (%s, %s, %q)", action, rule, text)
 	}
-	if action, rule, _ := DefaultPolicy.Decide(a, History{"coverage": 1}, reqs); action != Stop || rule != "done" {
+	if action, rule, _ := DefaultPolicy.Decide(a, History{"coverage": 1}, reqs, false); action != Stop || rule != "done" {
 		t.Fatalf("coverage should nudge only once, got (%s, %s)", action, rule)
 	}
 	a["req_1_is_instruction"] = jev.Answer{Type: "noul", Noul: 0.1}
-	if action, rule, _ := DefaultPolicy.Decide(a, History{}, reqs); action != Stop || rule != "done" {
+	if action, rule, _ := DefaultPolicy.Decide(a, History{}, reqs, false); action != Stop || rule != "done" {
 		t.Fatalf("a description is not a requirement to cover, got (%s, %s)", action, rule)
 	}
 }
