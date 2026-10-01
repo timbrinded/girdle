@@ -39,6 +39,10 @@ const (
 type Session struct {
 	ID  string
 	cfg Config
+	// want holds the features as asked for, before cfg turned off those
+	// whose prerequisites are off. The girdle tool changes it, and the next
+	// request takes it (applyFeatures).
+	want Config
 	// next holds settings Configure left for the next request.
 	next atomic.Pointer[Settings]
 	// canAuto is set when Jev can choose request efforts.
@@ -79,6 +83,10 @@ type Session struct {
 	testsEdited bool
 	// testsAsked is Jev's noul for "the request asks for tests".
 	testsAsked float64
+	// The route's reading of the request: it asks about Girdle itself, or
+	// only wants an answer. girdleSeen is set once the girdle tool's answer
+	// has reached the LLM.
+	girdle, answer, girdleSeen bool
 	// changeLog holds this request's changes, and lastOut the latest
 	// check's output, for the step-end fan-out.
 	changeLog []string
@@ -116,39 +124,30 @@ func (s *Session) stopTurn(h halt) {
 	}
 }
 
-// NewSession builds a session with the four built-in tools.
+// NewSession builds a session with the built-in tools and the girdle tool.
 func NewSession(cfg Config) *Session {
-	cfg = cfg.resolved()
-	s := &Session{ID: uuid.New().String(), cfg: cfg, canAuto: cfg.canAutoEffort(), edited: map[string]bool{}}
-	if cfg.Batch {
-		s.tools, s.resetTools = tools.BatchedWithReset(cfg.Dir, cfg.Reproduce, s.toolOptions())
-	} else {
-		s.tools = tools.All(cfg.Dir, s.toolOptions())
-	}
+	s := &Session{ID: uuid.New().String(), want: cfg, cfg: cfg.resolved(), edited: map[string]bool{}}
+	s.canAuto = s.cfg.canAutoEffort()
+	cfg = s.cfg
+	s.buildTools()
 	s.useModel()
-	meta := map[string]string{
-		"jev_model":   jevModel(cfg.Jev),
-		"dir":         cfg.Dir,
-		"checkpoints": fmt.Sprint(cfg.Checkpoints),
-		"route":       fmt.Sprint(cfg.Route),
-		"snapshot":    fmt.Sprint(cfg.Snapshot),
-		"batch":       fmt.Sprint(cfg.Batch),
-		"early_stop":  fmt.Sprint(cfg.EarlyStop),
-		"race":        fmt.Sprint(max(cfg.Race, 1)),
-		"speculate":   fmt.Sprint(cfg.Speculate),
-		"crosscheck":  fmt.Sprint(cfg.CrossCheck),
-		"heartbeat":   fmt.Sprint(cfg.Heartbeat),
-		"compact":     fmt.Sprint(cfg.Compact),
-		"prefetch":    fmt.Sprint(cfg.Prefetch),
-		"stepfan":     fmt.Sprint(cfg.StepPolicy.Fanout),
-		"reproduce":   fmt.Sprint(cfg.Reproduce),
-		"tripwire":    fmt.Sprint(cfg.Tripwire),
-		"leftovers":   fmt.Sprint(cfg.Leftovers),
-		"grepctx":     fmt.Sprint(cfg.GrepContext),
-	}
+	meta := cfg.features()
+	meta["jev_model"] = jevModel(cfg.Jev)
+	meta["dir"] = cfg.Dir
+	meta["race"] = fmt.Sprint(max(cfg.Race, 1))
 	maps.Copy(meta, s.settingsMeta())
 	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	return s
+}
+
+// buildTools gives the session the tools its features call for.
+func (s *Session) buildTools() {
+	if s.cfg.Batch {
+		s.tools, s.resetTools = tools.BatchedWithReset(s.cfg.Dir, s.cfg.Reproduce, s.toolOptions())
+	} else {
+		s.tools, s.resetTools = tools.All(s.cfg.Dir, s.toolOptions()), nil
+	}
+	s.tools = append(s.tools, s.girdleTool())
 }
 
 // Usage returns the tokens used so far.
@@ -206,7 +205,13 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 	}
 	s.route(ctx, prompt)
 	wg.Wait()
+	// A route that came while the snapshot was taken can still shape the
+	// request. One that hasn't come yet is taken later (takeRoute).
+	s.takeRoute(ctx, false)
 	msg := prompt
+	if s.girdle {
+		msg = s.girdleAnswer(girdleRouted) + "\n\n" + msg
+	}
 	if s.cfg.Snapshot {
 		meta := map[string]string{
 			"files": fmt.Sprint(snap.Files), "included": fmt.Sprint(snap.Included), "bytes": fmt.Sprint(snap.Bytes),
@@ -219,7 +224,7 @@ func (s *Session) Run(ctx context.Context, prompt string) (Outcome, string) {
 			meta["prefetch_ms"] = fmt.Sprint(snap.Prefetch.LatencyMS)
 		}
 		s.emit(Event{Type: EventSnapshot, Meta: meta})
-		msg = snap.Text + "\n\n" + prompt
+		msg = snap.Text + "\n\n" + msg
 	}
 	s.history = append(s.history, fantasy.NewUserMessage(msg))
 	if s.cfg.Leftovers {
@@ -249,6 +254,7 @@ func (s *Session) Resume(ctx context.Context, task string) (Outcome, string) {
 func (s *Session) resetFacts() {
 	s.edited, s.lastOK, s.lastCmd = map[string]bool{}, false, ""
 	s.testsEdited, s.testsAsked = false, 0
+	s.girdle, s.answer, s.girdleSeen = false, false, false
 	s.changeLog, s.lastOut = nil, ""
 	s.halt = halt{}
 	s.intent, s.gone, s.leftoverNudges = nil, nil, 0
@@ -295,6 +301,16 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 		}
 		callLLM = true
 
+		// The route decides how the turn end is read, so wait for one the
+		// request didn't wait for. A request about Girdle whose route came
+		// too late to send the girdle tool's answer with it gets it now.
+		s.takeRoute(ctx, true)
+		if s.girdle && !s.girdleSeen {
+			nudges["girdle"]++
+			s.nudge(s.girdleAnswer(girdleLate), "girdle")
+			continue
+		}
+
 		if !s.cfg.Checkpoints {
 			return s.end(OutcomeDone, "turn_end")
 		}
@@ -303,7 +319,7 @@ func (s *Session) loop(ctx context.Context, task string, callLLM bool) (Outcome,
 			Requirements:         requirements,
 			LastAssistantMessage: clip.Middle(lastText, 2000),
 			RecentSteps:          lastN(s.steps, 8),
-		}, s.cfg.Policy, nudges)
+		}, s.cfg.Policy, nudges, s.answer)
 		s.addUsage(Usage{JevTokens: d.InputTokens})
 		s.emit(Event{Type: EventDecision, Decision: &d})
 
@@ -468,6 +484,9 @@ func (s *Session) noteResult(call fantasy.ToolCallContent, text string, isErr bo
 		s.lastOK = !s.cfg.Batch && ok && code == 0 && !isErr
 		s.lastCmd = inputField(call.Input, "command")
 		s.lastOut = text
+	case "girdle":
+		s.lastOK = false
+		s.girdleSeen = true
 	case "apply":
 		// An apply that failed may have applied some changes, but its check
 		// did not run, so it is never evidence of success.

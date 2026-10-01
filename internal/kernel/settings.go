@@ -22,6 +22,7 @@ func (s *Session) CanAutoEffort() bool { return s.canAuto }
 // request starts. Only cfg.Settings changes: goroutines still finishing the
 // last request may be reading the rest.
 func (s *Session) applySettings() {
+	s.applyFeatures()
 	set := s.next.Swap(nil)
 	if set == nil {
 		return

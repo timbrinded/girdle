@@ -1,6 +1,8 @@
 package kernel
 
 import (
+	"context"
+	"fmt"
 	"regexp"
 	"time"
 
@@ -104,6 +106,13 @@ type Config struct {
 	// GrepContext adds to search results the definitions the matches are
 	// in, and shows them when there are few.
 	GrepContext bool
+
+	// OpenModel opens model id, with the efforts it accepts, for the girdle
+	// tool's model switch. Nil means the model can't be switched that way.
+	OpenModel func(ctx context.Context, id string) (fantasy.LanguageModel, []checkpoint.Effort, error)
+	// SaveDefaults saves a model and effort setting ("auto" or an effort)
+	// as what new sessions start with. Nil means they can't be saved.
+	SaveDefaults func(model, effort string) error
 }
 
 // resolved turns off every feature whose prerequisites are off, so the rest
@@ -125,6 +134,28 @@ func (c Config) resolved() Config {
 		c.MaxStepsPerTurn = 60
 	}
 	return c
+}
+
+// features records which features are on, by name, for the log and the
+// girdle tool.
+func (c Config) features() map[string]string {
+	return map[string]string{
+		"checkpoints": fmt.Sprint(c.Checkpoints),
+		"route":       fmt.Sprint(c.Route),
+		"snapshot":    fmt.Sprint(c.Snapshot),
+		"batch":       fmt.Sprint(c.Batch),
+		"early_stop":  fmt.Sprint(c.EarlyStop),
+		"speculate":   fmt.Sprint(c.Speculate),
+		"crosscheck":  fmt.Sprint(c.CrossCheck),
+		"heartbeat":   fmt.Sprint(c.Heartbeat),
+		"compact":     fmt.Sprint(c.Compact),
+		"prefetch":    fmt.Sprint(c.Prefetch),
+		"stepfan":     fmt.Sprint(c.StepPolicy.Fanout),
+		"reproduce":   fmt.Sprint(c.Reproduce),
+		"tripwire":    fmt.Sprint(c.Tripwire),
+		"leftovers":   fmt.Sprint(c.Leftovers),
+		"grepctx":     fmt.Sprint(c.GrepContext),
+	}
 }
 
 // canAutoEffort reports whether Jev can choose request efforts.

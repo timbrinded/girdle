@@ -138,6 +138,24 @@ func run() int {
 		Model: lm, ModelName: st.model, Efforts: st.catalog.Efforts(st.model),
 		AutoEffort: st.auto, Effort: st.effort,
 	}
+	// The girdle tool switches models as the picker does, and saves defaults
+	// where the picker saves them.
+	cfg.OpenModel = func(ctx context.Context, id string) (fantasy.LanguageModel, []checkpoint.Effort, error) {
+		if !st.catalog.Listed(id) {
+			return nil, nil, errors.New("not a tool-calling model this provider key can use")
+		}
+		lm, err := open(ctx, id)
+		return lm, st.catalog.Efforts(id), err
+	}
+	if *provider == "openrouter" {
+		cfg.SaveDefaults = func(model, effort string) error {
+			_, err := store.Update(func(l *models.List) {
+				l.Add(model)
+				l.Default = models.Defaults{Model: model, Effort: effort}
+			})
+			return err
+		}
+	}
 	cfg.Dir = workDir
 	cfg.Policy.MaxNudges = *maxNudges
 	cfg.MaxStepsPerTurn = *maxSteps
@@ -396,9 +414,15 @@ func headlessPrinter(asJSON bool) func(kernel.Event) {
 			fmt.Printf("◆ jev %s: %s (%s) %dms\n", d.Checkpoint, d.Action, d.Rule, d.LatencyMS)
 		case kernel.EventRoute:
 			r := e.Route
-			fmt.Printf("◆ jev route: complexity %.2f → %s effort %dms\n", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)
+			handling := ""
+			if h := r.Handling(); h != "" {
+				handling = ", " + h
+			}
+			fmt.Printf("◆ jev route: complexity %.2f → %s effort%s %dms\n", r.Score, cmp.Or(string(e.Effort), "no"), handling, r.LatencyMS)
 		case kernel.EventNudge:
 			fmt.Printf("↻ %s\n", e.Text)
+		case kernel.EventConfigure:
+			fmt.Printf("◇ %s\n", e.Text)
 		case kernel.EventError:
 			fmt.Printf("✗ %s\n", e.Text)
 		}

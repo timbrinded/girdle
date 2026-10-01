@@ -331,7 +331,11 @@ func (m *model) handleEvent(e kernel.Event) {
 	case kernel.EventRoute:
 		if r := e.Route; r != nil {
 			m.routed = e.Effort
-			m.appendLine(decisionStyle.Render(fmt.Sprintf("◆ jev · complexity %.2f · %s reasoning · %dms", r.Score, cmp.Or(string(e.Effort), "no"), r.LatencyMS)))
+			line := fmt.Sprintf("◆ jev · complexity %.2f · %s reasoning", r.Score, cmp.Or(string(e.Effort), "no"))
+			if h := r.Handling(); h != "" {
+				line += " · " + h
+			}
+			m.appendLine(decisionStyle.Render(fmt.Sprintf("%s · %dms", line, r.LatencyMS)))
 		}
 	case kernel.EventHeartbeat:
 		if h := e.Heartbeat; h != nil && h.Action != checkpoint.Continue {
@@ -341,6 +345,13 @@ func (m *model) handleEvent(e kernel.Event) {
 		m.appendLine(decisionStyle.Render("◆ cross-check " + e.Reason))
 	case kernel.EventNudge:
 		m.appendLine(dimStyle.Render("↻ nudged (" + e.Reason + ")"))
+	case kernel.EventConfigure:
+		// The session changed its own settings: keep them, so the next
+		// change made here starts from them.
+		if e.Settings != nil {
+			m.settings = *e.Settings
+		}
+		m.appendLine(dimStyle.Render("◇ " + e.Text))
 	case kernel.EventRunEnd:
 		m.flushStreaming()
 		style := doneStyle

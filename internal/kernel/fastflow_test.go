@@ -91,6 +91,19 @@ func fakeJev(t *testing.T, overrides ...map[string]float64) *jev.Client {
 					}
 				}
 				answers[k] = jev.Answer{Type: "choice", Choice: "done", Confidence: 0.95, Probabilities: map[string]float64{"done_verified": verified}}
+			case "subject":
+				// A change, unless a test sets P(girdle).
+				girdle := 0.0
+				if len(overrides) > 0 {
+					girdle = overrides[0]["subject_girdle"]
+				}
+				choice := checkpoint.SubjectChange
+				if girdle > 0.5 {
+					choice = checkpoint.SubjectGirdle
+				}
+				answers[k] = jev.Answer{Type: "choice", Choice: choice, Confidence: 0.9, Probabilities: map[string]float64{
+					checkpoint.SubjectChange: 1 - girdle, checkpoint.SubjectGirdle: girdle,
+				}}
 			case "needless_ask", "tests", "test_at_fault":
 				answers[k] = jev.Answer{Type: "noul", Noul: 0}
 			default:

@@ -68,6 +68,7 @@ func (s *Session) routeDecision(ctx context.Context, request string) checkpoint.
 func (s *Session) applyRoute(d checkpoint.RouteDecision) checkpoint.Effort {
 	s.addUsage(Usage{JevTokens: d.InputTokens})
 	s.testsAsked = d.Tests
+	s.girdle, s.answer = d.Girdle, d.Answer
 	want := s.cfg.Effort
 	if s.cfg.AutoEffort && d.Error == "" {
 		want = d.Effort
