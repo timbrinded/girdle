@@ -9,6 +9,8 @@
 # (default: Girdle's own default). Everything runs in a temporary directory
 # with its own config, cache and state, so local settings play no part.
 set -uo pipefail
+# The checks below are called through check, which shellcheck can't follow.
+# shellcheck disable=SC2317
 
 bin=$(realpath "${1:?usage: scripts/e2e.sh path/to/girdle}")
 [[ -n ${OPENROUTER_API_KEY:-} ]] || { echo "e2e: OPENROUTER_API_KEY is not set" >&2; exit 1; }
@@ -157,14 +159,15 @@ tui_question() {
 		pane question "GIRDLE_EXITED 0" 10
 }
 
-# In the large directory, ctrl+c stops a request at once, even before its
-# first LLM call, and a second ctrl+c quits.
+# In the large directory, ctrl+c stops a running request, and a second
+# quits. v0.2.0 never got past its snapshot there, and ignored ctrl+c.
 tui_ctrl_c() {
 	tui ctrlc "$bigdir" || return 1
-	tmux -L "$sock" send-keys -t ctrlc "hello" Enter
-	sleep 1
+	tmux -L "$sock" send-keys -t ctrlc "Write a 3000-word essay on the history of belts." Enter
+	pane ctrlc "is working" 10 || return 1
+	sleep 2
 	tmux -L "$sock" send-keys -t ctrlc C-c
-	pane ctrlc "stopped ·" 10 || return 1
+	pane ctrlc "stopped ·" 15 || return 1
 	tmux -L "$sock" send-keys -t ctrlc C-c
 	pane ctrlc "GIRDLE_EXITED 0" 10
 }
