@@ -96,7 +96,7 @@ The fast flow is on by default. It enables the features below and sets `-race 3`
 
 | Flag | Effect | Prerequisite |
 | --- | --- | --- |
-| `-snapshot` | Include repository context with each request | None |
+| `-snapshot` | Include repository context with each request | Not the home directory or the filesystem root |
 | `-prefetch` | Ask Jev which additional files a large-repository snapshot needs | Snapshot and Jev |
 | `-batch` | Use batched `lookup` and `apply` tools and ask for edits plus checks in one step | None |
 | `-early-stop` | Judge completion after tool results | Checkpoints and Jev |
@@ -108,7 +108,9 @@ The fast flow is on by default. It enables the features below and sets `-race 3`
 | `-heartbeat` | Periodically judge loops or drift and nudge | Checkpoints and Jev |
 | `-grepctx` | Attach definition context to search results | None |
 
-The kernel disables features whose prerequisites are missing. `session_start` records the resolved values. Cross-check generation may produce no valid test or may not be ready when needed; its event records what happened.
+The kernel disables features whose prerequisites are missing. `session_start` records the resolved values.
+
+Like the fff file finder, Girdle doesn't read the home directory or the filesystem root up front: started in either, it skips the snapshot and says so. Their subdirectories are read as usual. Outside a git repository the snapshot lists files by walking the tree, skipping hidden directories, and stops after 50,000 entries; a directory that reaches that limit gets no snapshot. Cross-check generation may produce no valid test or may not be ready when needed; its event records what happened.
 
 | Other flag | Effective default | Effect |
 | --- | --- | --- |

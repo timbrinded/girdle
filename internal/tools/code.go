@@ -209,23 +209,29 @@ const maxWalk = 50_000
 // since git knows what is ignored, and otherwise walks the tree, up to
 // maxWalk entries and until ctx ends.
 func SourceFiles(ctx context.Context, dir string) []string {
+	paths, _ := ListFiles(ctx, dir)
+	return paths
+}
+
+// ListFiles is SourceFiles, and also reports whether the list is whole: a
+// walk that reached maxWalk entries, or whose ctx ended, is not.
+func ListFiles(ctx context.Context, dir string) (paths []string, whole bool) {
 	// An empty answer means dir is ignored by an enclosing repository:
 	// walk it instead.
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err == nil && len(out) > 0 {
-		var paths []string
 		for p := range strings.SplitSeq(string(out), "\x00") {
 			if p != "" {
 				paths = append(paths, p)
 			}
 		}
 		slices.Sort(paths)
-		return slices.Compact(paths)
+		return slices.Compact(paths), true
 	}
-	var paths []string
-	walked := 0
+	walked, whole := 0, true
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if walked++; walked > maxWalk || ctx.Err() != nil {
+			whole = false
 			return filepath.SkipAll
 		}
 		if err != nil {
@@ -245,7 +251,7 @@ func SourceFiles(ctx context.Context, dir string) []string {
 		return nil
 	})
 	slices.Sort(paths)
-	return paths
+	return paths, whole
 }
 
 // leadingInt reads the number at the start of s, or 0.

@@ -542,6 +542,8 @@ func (m *model) handleEvent(e kernel.Event) {
 		}
 	case kernel.EventError:
 		m.add(&block{kind: blockError, text: e.Text})
+	case kernel.EventNotice:
+		m.add(&block{kind: blockNote, tone: toneNotice, text: e.Text})
 	}
 	m.refresh()
 }

@@ -137,6 +137,9 @@ func NewSession(cfg Config) *Session {
 	meta["race"] = fmt.Sprint(max(cfg.Race, 1))
 	maps.Copy(meta, s.settingsMeta())
 	s.emit(Event{Type: EventSessionStart, Meta: meta})
+	if where := unindexed(cfg.Dir); where != "" && s.want.Snapshot {
+		s.emit(Event{Type: EventNotice, Text: "Girdle is running in " + where + ", so it won't read files up front. Start it in a project folder, or pass -C, to send the project with each request."})
+	}
 	return s
 }
 

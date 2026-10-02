@@ -130,6 +130,11 @@ not_a_repo() {
 	headless "$bigdir" "hello" 30
 }
 
+# Like fff, Girdle doesn't read a home directory up front, and says so.
+home_dir() {
+	headless "$HOME" "hello" 30 && grep -q "running in your home directory" "$work/out"
+}
+
 # Tens of thousands of tiny files fit the snapshot's size budget, but v0.2.0
 # sent each with its file tags, a prompt of over a million tokens.
 many_files() {
@@ -177,6 +182,7 @@ check "version" version
 check "headless question" question
 check "headless change with a test" change
 check "headless in a large directory that isn't a repository" not_a_repo
+check "headless in the home directory skips the snapshot and says so" home_dir
 check "headless among many tiny files keeps the prompt small" many_files
 check "TUI question, then ctrl+c quits" tui_question
 check "TUI ctrl+c stops a request in a large directory, then quits" tui_ctrl_c

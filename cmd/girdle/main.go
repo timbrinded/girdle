@@ -483,6 +483,8 @@ func headlessPrinter(asJSON bool) func(kernel.Event) {
 			fmt.Printf("◇ %s\n", e.Text)
 		case kernel.EventError:
 			fmt.Printf("✗ %s\n", e.Text)
+		case kernel.EventNotice:
+			fmt.Printf("◇ %s\n", e.Text)
 		}
 	}
 }

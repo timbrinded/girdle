@@ -54,7 +54,12 @@ const (
 // With a picker, it also gets the files the picker judges the request most
 // likely to need.
 func TakeSnapshot(ctx context.Context, dir string, budget int, request string, pick Picker) Snapshot {
-	paths := tools.SourceFiles(ctx, dir)
+	paths, whole := tools.ListFiles(ctx, dir)
+	if !whole {
+		// A directory that isn't a repository and holds this many files is
+		// not a project; a slice of it would be noise.
+		return Snapshot{Files: len(paths), Text: "<repository_snapshot>\nThis directory isn't a git repository and holds too many files to read up front, so there is no snapshot. Look up what you need.\n</repository_snapshot>"}
+	}
 	// Past maxListed files the listing is cut short, so the snapshot can't
 	// be whole however small the files are: tens of thousands of empty
 	// files made a prompt of megabytes of file tags.
