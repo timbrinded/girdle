@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -56,6 +57,24 @@ func TestResolvedTurnsOffUnmetFeatures(t *testing.T) {
 			if want := !slices.Contains(tc.off, name); v != want {
 				t.Errorf("%s: %s = %v, want %v", tc.name, name, v, want)
 			}
+		}
+	}
+}
+
+// Like fff, Girdle doesn't read the filesystem root or the home directory
+// up front, but does read their subdirectories.
+func TestUnindexed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for dir, want := range map[string]bool{
+		"/":                         true,
+		home:                        true,
+		home + "/":                  true,
+		filepath.Join(home, "proj"): false,
+	} {
+		cfg := Config{Dir: dir, Snapshot: true}.resolved()
+		if cfg.Snapshot == want {
+			t.Errorf("%s: snapshot = %v", dir, cfg.Snapshot)
 		}
 	}
 }

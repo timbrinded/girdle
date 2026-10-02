@@ -188,7 +188,7 @@ func (m *model) keyHint() string {
 		return fitHints(width, hints, "   ·   ")
 	}
 	quit := "ctrl+c quit"
-	if m.running {
+	if m.running && !m.stopping {
 		quit = "ctrl+c stop"
 	}
 	expand := "ctrl+o expand"
@@ -285,7 +285,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.animate()
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
-			if m.running {
+			// The first ctrl+c stops a running request; a second quits
+			// without waiting for it to stop.
+			if m.running && !m.stopping {
 				m.cancel()
 				m.stopping = true
 				return m, nil
@@ -540,6 +542,8 @@ func (m *model) handleEvent(e kernel.Event) {
 		}
 	case kernel.EventError:
 		m.add(&block{kind: blockError, text: e.Text})
+	case kernel.EventNotice:
+		m.add(&block{kind: blockNote, tone: toneNotice, text: e.Text})
 	}
 	m.refresh()
 }

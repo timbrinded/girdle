@@ -18,9 +18,46 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+      - name: Install tmux and ast-grep
+        run: |
+          sudo apt-get install -yq tmux
+          npm install -g @ast-grep/cli
+      # The same build GoReleaser makes: a release that fails end to end
+      # isn't published.
+      - run: CGO_ENABLED=0 go build -trimpath -o girdle ./cmd/girdle
+      - run: scripts/e2e.sh ./girdle
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GIRDLE_MODEL: ${{ vars.GIRDLE_MODEL }}
+      - run: rm girdle
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Installs the published release the way users do, and runs the same
+  # checks against it.
+  verify:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install tmux and ast-grep
+        run: |
+          sudo apt-get install -yq tmux
+          npm install -g @ast-grep/cli
+      - name: Install the release
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/timbrinded/girdle/${GITHUB_REF_NAME}/install.sh" | GIRDLE_VERSION="$GITHUB_REF_NAME" GIRDLE_INSTALL_DIR="$HOME/bin" sh
+          test "$("$HOME/bin/girdle" -version)" = "girdle $GITHUB_REF_NAME"
+      - run: scripts/e2e.sh "$HOME/bin/girdle"
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GIRDLE_MODEL: ${{ vars.GIRDLE_MODEL }}

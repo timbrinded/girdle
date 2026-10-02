@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -128,5 +129,20 @@ func TestSystemPromptSections(t *testing.T) {
 	}
 	if !strings.Contains(fast, "repository snapshot") || !strings.Contains(fast, "one apply call") || !strings.Contains(fast, "one lookup call") {
 		t.Fatal("fast prompt is missing its instructions")
+	}
+}
+
+// A directory whose files couldn't all be listed gets no snapshot rather
+// than a slice of one.
+func TestSnapshotOfAnUnfinishedListing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	snap := TakeSnapshot(ctx, dir, DefaultSnapshotBudget, "hello", nil)
+	if snap.Included != 0 || !strings.Contains(snap.Text, "no snapshot") {
+		t.Fatalf("snapshot of an unfinished listing: %+v", snap)
 	}
 }

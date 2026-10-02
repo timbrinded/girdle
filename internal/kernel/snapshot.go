@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
@@ -53,8 +54,16 @@ const (
 // With a picker, it also gets the files the picker judges the request most
 // likely to need.
 func TakeSnapshot(ctx context.Context, dir string, budget int, request string, pick Picker) Snapshot {
-	paths := tools.SourceFiles(ctx, dir)
-	if total := textBytes(dir, paths); total > budget {
+	paths, whole := tools.ListFiles(ctx, dir)
+	if !whole {
+		// A directory that isn't a repository and holds this many files is
+		// not a project; a slice of it would be noise.
+		return Snapshot{Files: len(paths), Text: "<repository_snapshot>\nThis directory isn't a git repository and holds too many files to read up front, so there is no snapshot. Look up what you need.\n</repository_snapshot>"}
+	}
+	// Past maxListed files the listing is cut short, so the snapshot can't
+	// be whole however small the files are: tens of thousands of empty
+	// files made a prompt of megabytes of file tags.
+	if total := textBytes(dir, paths); total > budget || len(paths) > maxListed {
 		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, pick)
 	}
 	var snap Snapshot
@@ -301,6 +310,12 @@ const (
 // prefetchWait.
 const prefetchJudgeable = 128
 
+// prefetchScan bounds the reading of candidate files before Jev is asked.
+// A repository reads in well under a second; a directory that isn't one,
+// such as a home directory, took 44 s, holding up the first LLM call.
+// Past it, Jev judges what has been read.
+const prefetchScan = 2 * time.Second
+
 // definesCode reports whether a file has a top-level definition an outline
 // would list.
 func definesCode(data []byte) bool {
@@ -342,7 +357,11 @@ func outline(data []byte) string {
 func prefetch(ctx context.Context, dir string, paths, shown []string, request string, pick Picker, add func(string) bool, snap *Snapshot) {
 	data := map[string][]byte{}
 	var cands, code []checkpoint.FileOutline
+	deadline := time.Now().Add(prefetchScan)
 	for _, p := range paths {
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			break
+		}
 		if slices.Contains(shown, p) {
 			continue
 		}

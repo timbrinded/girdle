@@ -196,32 +196,49 @@ func IsTestFile(path string) bool {
 }
 
 // skipDirs are never worth walking when dir isn't a git repository:
-// version control data, dependencies and build output.
-var skipDirs = []string{".git", "node_modules", "vendor", ".venv", "venv", "__pycache__", "dist", "build", "target", ".next", ".cache"}
+// dependencies and build output. Hidden directories are skipped too.
+var skipDirs = []string{"node_modules", "vendor", "venv", "__pycache__", "dist", "build", "target"}
+
+// maxWalk bounds the entries walked when dir isn't a git repository. A
+// directory like a home directory holds millions, and walking them all held
+// up every request for minutes (v0.2.0, where the snapshot became the
+// default).
+const maxWalk = 50_000
 
 // SourceFiles returns dir's files relative to dir, sorted. It asks git first,
-// since git knows what is ignored, and walks the tree otherwise.
+// since git knows what is ignored, and otherwise walks the tree, up to
+// maxWalk entries and until ctx ends.
 func SourceFiles(ctx context.Context, dir string) []string {
+	paths, _ := ListFiles(ctx, dir)
+	return paths
+}
+
+// ListFiles is SourceFiles, and also reports whether the list is whole: a
+// walk that reached maxWalk entries, or whose ctx ended, is not.
+func ListFiles(ctx context.Context, dir string) (paths []string, whole bool) {
 	// An empty answer means dir is ignored by an enclosing repository:
 	// walk it instead.
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err == nil && len(out) > 0 {
-		var paths []string
 		for p := range strings.SplitSeq(string(out), "\x00") {
 			if p != "" {
 				paths = append(paths, p)
 			}
 		}
 		slices.Sort(paths)
-		return slices.Compact(paths)
+		return slices.Compact(paths), true
 	}
-	var paths []string
+	walked, whole := 0, true
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if walked++; walked > maxWalk || ctx.Err() != nil {
+			whole = false
+			return filepath.SkipAll
+		}
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != dir && slices.Contains(skipDirs, d.Name()) {
+			if path != dir && (strings.HasPrefix(d.Name(), ".") || slices.Contains(skipDirs, d.Name())) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -234,7 +251,7 @@ func SourceFiles(ctx context.Context, dir string) []string {
 		return nil
 	})
 	slices.Sort(paths)
-	return paths
+	return paths, whole
 }
 
 // leadingInt reads the number at the start of s, or 0.

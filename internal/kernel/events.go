@@ -26,6 +26,7 @@ const (
 	EventRoute         EventType = "route"
 	EventSettings      EventType = "settings"   // the model or reasoning effort changed, from this request on
 	EventConfigure     EventType = "configure"  // the girdle tool changed settings, for the next request
+	EventNotice        EventType = "notice"     // something the user should know about the session
 	EventSnapshot      EventType = "snapshot"   // files sent with a request
 	EventStep          EventType = "step"       // one LLM call: timing and usage
 	EventRace          EventType = "race"       // a raced LLM call: estimated usage of the losing copies

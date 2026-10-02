@@ -3,6 +3,8 @@ package kernel
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -129,6 +131,7 @@ func (c Config) resolved() Config {
 	c.Compact = c.Compact && judged
 	c.Reproduce = c.Reproduce && c.Batch
 	c.Leftovers = c.Leftovers && c.Jev != nil
+	c.Snapshot = c.Snapshot && unindexed(c.Dir) == ""
 	c.Prefetch = c.Prefetch && c.Snapshot && c.Jev != nil
 	if c.MaxStepsPerTurn == 0 {
 		c.MaxStepsPerTurn = 60
@@ -156,6 +159,24 @@ func (c Config) features() map[string]string {
 		"leftovers":   fmt.Sprint(c.Leftovers),
 		"grepctx":     fmt.Sprint(c.GrepContext),
 	}
+}
+
+// unindexed says why Girdle won't read dir's files up front, or returns "".
+// Like fff, it leaves the filesystem root and the home directory alone:
+// either holds far more than any project, and walking one held up every
+// request in v0.2.0. Their subdirectories are read as usual.
+func unindexed(dir string) string {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	if filepath.Dir(dir) == dir {
+		return "the filesystem root"
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == dir {
+		return "your home directory"
+	}
+	return ""
 }
 
 // canAutoEffort reports whether Jev can choose request efforts.
