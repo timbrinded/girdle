@@ -31,7 +31,7 @@ type Models struct {
 // they can't.
 func (m *model) needModels() bool {
 	if m.models == nil {
-		m.appendLine(dimStyle.Render("◇ choosing a model works with OpenRouter only"))
+		m.say(toneInfo, "choosing a model works with OpenRouter only")
 	}
 	return m.models != nil
 }
@@ -67,14 +67,14 @@ func (m *model) takeCatalog(msg catalogMsg) {
 	if msg.err != nil {
 		m.fetchErr = msg.err.Error()
 		if len(m.models.Catalog.Models) == 0 {
-			m.notify(dimStyle.Render("◇ couldn't load OpenRouter's models, so they can't be listed or checked: " + m.fetchErr))
+			m.notify(toneInfo, "couldn't load OpenRouter's models, so they can't be listed or checked: "+m.fetchErr)
 		}
 		return
 	}
 	m.fetchErr = ""
 	m.models.Catalog = msg.catalog
 	if err := m.models.Store.SaveCatalog(msg.catalog); err != nil {
-		m.appendLine(errStyle.Render("✗ caching OpenRouter's models: " + err.Error()))
+		m.say(toneError, "caching OpenRouter's models: "+err.Error())
 	}
 	if m.picker != nil {
 		m.refind(false)
@@ -90,11 +90,11 @@ func (m *model) takeCatalog(msg catalogMsg) {
 	}
 	next, ok := m.models.List.Latest(msg.catalog.Listed)
 	if !ok {
-		m.appendLine(errStyle.Render("✗ " + current + " isn't available to your OpenRouter key. Press ctrl+l to pick another model."))
+		m.say(toneError, current+" isn't available to your OpenRouter key. Press ctrl+l to pick another model.")
 		return
 	}
 	if m.useModel(next) {
-		m.appendLine(decisionStyle.Render(fmt.Sprintf("◇ %s isn't available to your OpenRouter key any more, so %s, picked most recently, takes over", current, next)))
+		m.say(toneNotice, fmt.Sprintf("%s isn't available to your OpenRouter key any more, so %s, picked most recently, takes over", current, next))
 	}
 }
 
@@ -103,13 +103,13 @@ func (m *model) takeCatalog(msg catalogMsg) {
 func (m *model) useModel(id string) bool {
 	lm, err := m.models.Open(m.ctx, id)
 	if err != nil {
-		m.notify(errStyle.Render("✗ " + id + ": " + err.Error()))
+		m.notify(toneError, id+": "+err.Error())
 		return false
 	}
 	m.settings.Model, m.settings.ModelName, m.settings.Efforts = lm, id, m.models.Catalog.Efforts(id)
 	m.configure()
 	m.saveList(func(l *models.List) { l.Pick(id, time.Now()) })
-	m.appendLine(dimStyle.Render(fmt.Sprintf("◇ model %s · effort %s%s", id, m.effortLabel(), m.fromNext())))
+	m.say(toneInfo, fmt.Sprintf("model %s · effort %s%s", id, m.effortLabel(), m.fromNext()))
 	return true
 }
 
@@ -125,7 +125,7 @@ func (m *model) nextModel() {
 			return
 		}
 	}
-	m.notify(dimStyle.Render("◇ ctrl+p cycles through your models: add some with ctrl+l, then enter or ctrl+f"))
+	m.notify(toneInfo, "ctrl+p cycles through your models: add some with ctrl+l, then enter or ctrl+f")
 }
 
 // toggleYours adds id to the user's models, or removes it. Removing the
@@ -133,23 +133,23 @@ func (m *model) nextModel() {
 func (m *model) toggleYours(id string) {
 	if !m.models.List.Has(id) {
 		m.saveList(func(l *models.List) { l.Add(id) })
-		m.notify(dimStyle.Render("added " + id + " to your models"))
+		m.notify(toneInfo, "added "+id+" to your models")
 		m.refind(false)
 		return
 	}
 	if len(m.models.List.Models) == 1 {
-		m.notify(dimStyle.Render("your models need at least one: add another before removing this one"))
+		m.notify(toneInfo, "your models need at least one: add another before removing this one")
 		return
 	}
 	m.saveList(func(l *models.List) { l.Remove(id) })
-	m.notify(dimStyle.Render("removed " + id + " from your models"))
+	m.notify(toneInfo, "removed "+id+" from your models")
 	if id == m.settings.ModelName {
 		next, ok := m.models.List.Latest(m.models.Catalog.Listed)
 		if !ok {
 			next, _ = m.models.List.Latest(func(string) bool { return true })
 		}
 		if m.useModel(next) {
-			m.notify(dimStyle.Render("removed " + id + " from your models, so " + next + ", picked most recently, is in use"))
+			m.notify(toneInfo, "removed "+id+" from your models, so "+next+", picked most recently, is in use")
 		}
 	}
 	// The removed model drops into the long list; stay with yours.
@@ -165,7 +165,7 @@ func (m *model) saveDefault(id string) {
 		l.Add(d.Model)
 		l.Default = d
 	})
-	m.notify(dimStyle.Render(fmt.Sprintf("new sessions start on %s at effort %s", d.Model, d.Effort)))
+	m.notify(toneInfo, fmt.Sprintf("new sessions start on %s at effort %s", d.Model, d.Effort))
 	m.refind(false)
 }
 
@@ -175,7 +175,7 @@ func (m *model) saveList(change func(*models.List)) {
 	l, err := m.models.Store.Update(change)
 	if err != nil {
 		change(&m.models.List)
-		m.notify(errStyle.Render("✗ saving your models: " + err.Error()))
+		m.notify(toneError, "saving your models: "+err.Error())
 		return
 	}
 	m.models.List = l

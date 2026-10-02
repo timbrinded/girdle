@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh
 girdle -version
 ```
 
-The script downloads the release archive for your platform from [GitHub releases](https://github.com/timbrinded/girdle/releases), checks it against the release's `checksums.txt`, and installs the binary into `~/.local/bin`. Run it again to upgrade. Two environment variables change what it does:
+The script downloads the release archive for your platform from [GitHub releases](https://github.com/timbrinded/girdle/releases), checks it against the release's `checksums.txt`, and installs the binary into `~/.local/bin`. Two environment variables change what it does:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -35,6 +35,8 @@ The script downloads the release archive for your platform from [GitHub releases
 | `GIRDLE_INSTALL_DIR` | `~/.local/bin` | Directory for the binary |
 
 For example, `curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | GIRDLE_VERSION=v0.1.0 sh`. If `girdle` is not found afterwards, add the install directory to your PATH. You can also download an archive from the releases page and put its `girdle` binary on your PATH yourself.
+
+## Other ways to install
 
 With Go **1.27.0 or newer**, as declared in [go.mod](../go.mod), install a release with Go instead:
 
@@ -52,6 +54,16 @@ cd girdle
 go build -o bin/girdle ./cmd/girdle
 bin/girdle -h
 ```
+
+## Update
+
+A release build checks for a newer release when the TUI starts, at most once a day, and says so under the welcome screen:
+
+```text
+Girdle v0.3.0 is available (you have v0.2.0). Run `girdle update` to update.
+```
+
+`girdle update` downloads the latest release for your platform, checks it against the release's `checksums.txt`, and replaces the running binary. If the binary sits in a directory you can't write to, rerun it with the permissions that directory needs. Set `GIRDLE_NO_UPDATE_CHECK=1` to turn the check off. Builds from a checkout never check, and `girdle update` leaves them alone. Running the install script again also updates.
 
 ## Configure the keys
 
@@ -86,7 +98,7 @@ girdle -C /path/to/project -model 'provider/model-id' -p "fix the failing test"
 
 The ID above is a placeholder: choose a tool-calling model available to your account. In the OpenRouter TUI, Ctrl+L opens the searchable picker.
 
-Add `-fast` to enable the fast flow. Inspect the resulting diff and checks before relying on the outcome. Exit `0` means the harness judged the request complete; it is not an independent proof of correctness. See [usage](usage.md#headless-runs).
+Girdle runs the fast flow by default; add `-boring` to turn it off. Inspect the resulting diff and checks before relying on the outcome. Exit `0` means the harness judged the request complete; it is not an independent proof of correctness. See [usage](usage.md#headless-runs).
 
 ## Troubleshooting
 

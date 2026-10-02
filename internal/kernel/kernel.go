@@ -410,8 +410,9 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 			gotToken()
 			return nil
 		},
-		OnToolInputStart: func(_, _ string) error {
+		OnToolInputStart: func(id, name string) error {
 			gotToken()
+			s.emit(Event{Type: EventToolStart, Tool: name, CallID: id})
 			return nil
 		},
 		OnStreamFinish: func(u fantasy.Usage, _ fantasy.FinishReason, _ fantasy.ProviderMetadata) error {

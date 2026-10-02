@@ -15,13 +15,6 @@ import (
 	"github.com/timbrinded/girdle/internal/models"
 )
 
-var (
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4CC2B5"))
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	headerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#E3AE5B"))
-	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#5A6660")).Padding(0, 1)
-)
-
 // pickerView draws the picker as a panel width by height.
 func (m *model) pickerView(width, height int) string {
 	p := m.picker
@@ -108,11 +101,11 @@ func (m *model) rowName(r row) string {
 // what it means after.
 func (m *model) drawRow(r row, selected bool, col int) string {
 	if r.header != "" {
-		return headerStyle.Render(r.header)
+		return decisionStyle.Render(r.header)
 	}
 	cursor, style := "  ", lipgloss.NewStyle()
 	if selected {
-		cursor, style = "› ", selectedStyle
+		cursor, style = "› ", userStyle
 	}
 	mark := "  "
 	if r.id == m.currentChoice() {

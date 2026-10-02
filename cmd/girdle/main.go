@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/timbrinded/girdle/internal/kernel"
 	"github.com/timbrinded/girdle/internal/models"
 	"github.com/timbrinded/girdle/internal/tui"
+	"github.com/timbrinded/girdle/internal/update"
 )
 
 // defaultModel is free on OpenRouter for now, and it is what the fast flow
@@ -76,13 +79,14 @@ func run() int {
 		maxNudges   = flag.Int("max-nudges", checkpoint.DefaultPolicy.MaxNudges, "most nudges per run before asking the user")
 		maxSteps    = flag.Int("max-steps", 60, "most LLM steps per turn")
 		timeoutFlag = flag.Duration("timeout", 0, "headless: give up after this long (0 = no limit)")
-		fast        = flag.Bool("fast", false, "fast flow: -snapshot -prefetch -batch -early-stop -stepfan -leftovers -speculate -crosscheck -reproduce -heartbeat -grepctx, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -fast -reproduce=false leaves reproduce out")
+		fast        = flag.Bool("fast", true, "the fast flow, on unless -boring: -snapshot -prefetch -batch -early-stop -stepfan -leftovers -speculate -crosscheck -reproduce -heartbeat -grepctx, and -race 3 -hedge 3s; setting any of them explicitly overrides it, so -reproduce=false leaves reproduce out")
+		boring      = flag.Bool("boring", false, "the boring flow: turn the fast flow off, so each feature is off unless set and calls are not raced; GIRDLE_BORING=1 makes this the default")
 		snapshot    = flag.Bool("snapshot", false, "send the repository's files with each request")
 		batch       = flag.Bool("batch", false, "ask the LLM to make all edits and run the checks in one step")
 		earlyStop   = flag.Bool("early-stop", false, "end the run as soon as Jev reads the tool results as the task done")
-		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 1, or 3 with -fast)")
+		raceFlag    = flag.Int("race", 0, "send each LLM call this many times at once and keep the first complete answer (default 3, or 1 with -boring)")
 		speculate   = flag.Bool("speculate", false, "start the first LLM call on low effort while Jev routes, instead of waiting")
-		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed (shelved: not part of -fast)")
+		compact     = flag.Bool("compact", false, "every 8 steps, prune older tool output that Jev judges no longer needed (shelved: not part of the fast flow)")
 		stepfan     = flag.Bool("stepfan", false, "at each step end, ask Jev a broad set of questions about the changes and the check's output, and stop once it reads the work as done and verified")
 		prefetch    = flag.Bool("prefetch", false, "for a repository too large to snapshot whole, ask Jev which other files the request needs and add them to the snapshot")
 		leftovers   = flag.Bool("leftovers", false, "ask Jev which names and files the request wants gone, and before stopping check that none remain")
@@ -93,7 +97,7 @@ func run() int {
 		reproduce   = flag.Bool("reproduce", false, "let apply check that a bug fix's regression test fails without the fix")
 		heartbeat   = flag.Bool("heartbeat", false, "every 6 steps, ask Jev whether the work is looping or drifting, and nudge it if so")
 		crossCheck  = flag.Bool("crosscheck", false, "write an independent test of each request in the background and run it when the agent's check passes (needs -batch and -early-stop)")
-		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 0, or 3s with -fast)")
+		hedge       = flag.Duration("hedge", -1, "with -race, wait this long for an answer before starting each extra copy of calls after a request's first (default 3s, or 0 with -boring)")
 	)
 	flag.Func("deny-read", "a regular expression for absolute paths that tools may not read outside the working directory, such as other copies of a benchmark's code under test (repeatable; shell commands need macOS's sandbox-exec)", func(v string) error {
 		re, err := regexp.Compile(v)
@@ -108,11 +112,22 @@ func run() int {
 		fmt.Println("girdle", buildinfo.Version())
 		return exitDone
 	}
-	// -fast turns a set of flags on. A flag set explicitly wins, so an
-	// ablation is -fast with one part set to false.
+	switch flag.Arg(0) {
+	case "":
+	case "update":
+		return selfUpdate()
+	default:
+		return fail(fmt.Errorf("unknown command %q: the only command is update, and girdle -h lists the flags", flag.Arg(0)))
+	}
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	withFast := func(name string, v bool) bool { return v || *fast && !explicit[name] }
+	fastFlow, err := fastFlowOn(*fast, *boring, explicit, os.Getenv("GIRDLE_BORING"))
+	if err != nil {
+		return fail(err)
+	}
+	// The fast flow turns a set of flags on. A flag set explicitly wins, so an
+	// ablation is the fast flow with one part set to false.
+	withFast := func(name string, v bool) bool { return v || fastFlow && !explicit[name] }
 
 	workDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -175,7 +190,7 @@ func run() int {
 	cfg.Race = *raceFlag
 	if cfg.Race == 0 {
 		cfg.Race = 1
-		if *fast {
+		if fastFlow {
 			cfg.Race = 3
 		}
 	}
@@ -199,7 +214,7 @@ func run() int {
 	cfg.Hedge = *hedge
 	if cfg.Hedge < 0 {
 		cfg.Hedge = 0
-		if *fast {
+		if fastFlow {
 			cfg.Hedge = 3 * time.Second
 		}
 	}
@@ -222,7 +237,10 @@ func run() int {
 				},
 			}
 		}
-		if err := tui.Run(ctx, cfg, path, picker); err != nil {
+		notice := func(ctx context.Context) string {
+			return update.GitHub.Notice(ctx, buildinfo.Version(), update.CachePath())
+		}
+		if err := tui.Run(ctx, cfg, path, picker, flowLabel(fastFlow, cfg.Race), notice); err != nil {
 			return fail(err)
 		}
 		return exitDone
@@ -385,6 +403,40 @@ func zenEffort(e checkpoint.Effort) fantasy.ProviderOptions {
 	return opts
 }
 
+// selfUpdate replaces the running binary with the latest release.
+func selfUpdate() int {
+	current := buildinfo.Version()
+	if !update.IsRelease(current) {
+		return fail(fmt.Errorf("this build (%s) isn't a release, so girdle update leaves it alone; install a release with: curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | sh", current))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	latest, err := update.GitHub.LatestTag(ctx)
+	if err != nil {
+		return fail(fmt.Errorf("finding the latest release: %w", err))
+	}
+	if !update.Newer(latest, current) {
+		fmt.Printf("girdle %s is the latest release\n", current)
+		return exitDone
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	fmt.Printf("Updating girdle %s to %s\n", current, latest)
+	if err := update.GitHub.Install(ctx, latest, exe); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			err = fmt.Errorf("%w; %s isn't writable, so rerun with the permissions it needs", err, filepath.Dir(exe))
+		}
+		return fail(fmt.Errorf("update: %w", err))
+	}
+	fmt.Printf("Updated %s to girdle %s\n", exe, latest)
+	return exitDone
+}
+
 func defaultLogPath() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
@@ -399,7 +451,7 @@ func defaultLogPath() string {
 func headlessPrinter(asJSON bool) func(kernel.Event) {
 	return func(e kernel.Event) {
 		if asJSON {
-			if e.Type == kernel.EventTextDelta {
+			if e.UIOnly() {
 				return
 			}
 			b, _ := json.Marshal(e)
@@ -469,4 +521,34 @@ func loadSeed(path string) (string, []fantasy.Message, error) {
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, "girdle:", err)
 	return exitError
+}
+
+// fastFlowOn says whether the fast flow is on. It is unless -boring,
+// -fast=false or GIRDLE_BORING turns it off, and a flag beats the
+// environment.
+func fastFlowOn(fast, boring bool, explicit map[string]bool, env string) (bool, error) {
+	if explicit["boring"] && explicit["fast"] && boring == fast {
+		return false, errors.New("-boring and -fast contradict each other: pick one")
+	}
+	if !explicit["boring"] && !explicit["fast"] && env != "" {
+		b, err := strconv.ParseBool(env)
+		if err != nil {
+			return false, fmt.Errorf("GIRDLE_BORING=%q: use 1 or 0", env)
+		}
+		boring = b
+	}
+	return fast && !boring, nil
+}
+
+// flowLabel names the flow for the TUI, with the racing that multiplies
+// LLM calls.
+func flowLabel(fast bool, race int) string {
+	label := "boring"
+	if fast {
+		label = "fast"
+	}
+	if race > 1 {
+		label += fmt.Sprintf(" · races up to %d copies of each call", race)
+	}
+	return label
 }

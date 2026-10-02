@@ -31,7 +31,7 @@ func (m *model) effortChoices() []string {
 func (m *model) cycleEffort() {
 	choices := m.effortChoices()
 	if len(choices) == 0 {
-		m.notify(dimStyle.Render("◇ " + m.settings.ModelName + " has no reasoning effort setting"))
+		m.notify(toneInfo, m.settings.ModelName+" has no reasoning effort setting")
 		return
 	}
 	// A pinned effort the model doesn't accept steps on from the one it
@@ -44,7 +44,7 @@ func (m *model) cycleEffort() {
 	e, auto, _ := models.ParseEffort(choices[(slices.Index(choices, current)+1)%len(choices)])
 	m.applyEffort(e, auto)
 	if m.running {
-		m.notify(dimStyle.Render("◇ effort " + m.effortLabel() + m.fromNext()))
+		m.notify(toneInfo, "effort "+m.effortLabel()+m.fromNext())
 	}
 }
 
@@ -54,21 +54,21 @@ func (m *model) setEffort(setting string) bool {
 	e, auto, err := models.ParseEffort(setting)
 	switch {
 	case err != nil:
-		m.notify(errStyle.Render("✗ " + err.Error()))
+		m.notify(toneError, err.Error())
 		return false
 	case len(m.settings.Efforts) == 0:
-		m.notify(dimStyle.Render("◇ " + m.settings.ModelName + " has no reasoning effort setting"))
+		m.notify(toneInfo, m.settings.ModelName+" has no reasoning effort setting")
 		return false
 	case auto && !m.canRoute:
-		m.notify(dimStyle.Render("◇ auto needs Jev, which is off: pick an effort instead"))
+		m.notify(toneInfo, "auto needs Jev, which is off: pick an effort instead")
 		return false
 	}
 	m.applyEffort(e, auto)
 	if !auto && e.Fit(m.settings.Efforts) != e {
-		m.notify(dimStyle.Render(fmt.Sprintf("◇ %s doesn't take %s, so it gets %s", m.settings.ModelName, e, m.effortLabel())))
+		m.notify(toneInfo, fmt.Sprintf("%s doesn't take %s, so it gets %s", m.settings.ModelName, e, m.effortLabel()))
 		return true
 	}
-	m.notify(dimStyle.Render("◇ effort " + m.effortLabel() + m.fromNext()))
+	m.notify(toneInfo, "effort "+m.effortLabel()+m.fromNext())
 	return true
 }
 

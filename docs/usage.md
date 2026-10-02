@@ -4,7 +4,9 @@ Girdle has an interactive terminal UI and a headless mode. Both use the same ses
 
 ## Interactive requests
 
-Run `bin/girdle -C /path/to/project`, enter a request and press Enter. A session retains conversation history across requests. Ctrl+C cancels the active request; Ctrl+C while idle exits. Page Up and Page Down scroll the output.
+Run `girdle -C /path/to/project`, type a request in the box at the bottom and press Enter. Ctrl+J (or Shift+Enter, where the terminal reports it) starts a new line, and the box grows to fit. A session retains conversation history across requests. Ctrl+C cancels the active request; Ctrl+C while idle exits. Page Up, Page Down and the mouse wheel scroll the output; while you are scrolled up, new output doesn't move the view, and the status line says there is more below.
+
+The transcript shows your requests, the agent's replies (rendered Markdown), a summary of its reasoning for each step, each tool call with its result, and Jev's decisions. Ctrl+O shows reasoning and tool output in full. The status line shows what a running request is doing and how long it has taken, then how the last one ended and the session's token use. The TUI follows the terminal's light or dark background.
 
 Model and effort changes take effect on the **next request**, including changes queued while a request runs. A model switch converts the existing history for the new provider by dropping earlier reasoning and serializing parallel tool calls with their results.
 
@@ -36,8 +38,8 @@ For headless runs, `-reasoning` sets the fallback effort. Add `-no-route` to pin
 ## Headless runs
 
 ```bash
-bin/girdle -fast -C /path/to/project -p "fix the failing test" -timeout 10m
-bin/girdle -C /path/to/project -p "explain the parser" -json > events.jsonl
+girdle -C /path/to/project -p "fix the failing test" -timeout 10m
+girdle -C /path/to/project -p "explain the parser" -json > events.jsonl
 ```
 
 Place flags before positional arguments. `-p` supplies the request; `-seed` can instead supply a seeded conversation for a gate or experiment. A supplied `-p` adds a request after the seed; without it, the seeded conversation resumes. See [configuration](configuration.md#run-and-output).
@@ -69,7 +71,7 @@ The event definition is [internal/kernel/events.go](../internal/kernel/events.go
 | `snapshot`, `crosscheck`, `compact`, `leftovers`, `reproduce` | Evidence and outcomes for the corresponding features |
 | `nudge`, `error`, `run_end` | Continuation messages, errors and terminal outcome with reason |
 
-Streaming `text_delta` events reach the TUI but are excluded from both JSON output and the persistent log. Concurrent event writes are serialized within the session.
+Streaming `text_delta` events, and the `tool_start` events that mark the LLM beginning to write a tool call, reach the TUI but are excluded from both JSON output and the persistent log. Concurrent event writes are serialized within the session.
 
 For example, inspect a log with Python's standard library:
 
