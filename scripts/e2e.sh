@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# The checks are called through check, which shellcheck can't follow.
+# shellcheck disable=SC2317,SC2329
 # End-to-end checks of a girdle binary against a real LLM, and Jev when
 # TYPESAFE_API_KEY is set: headless runs (-p), and the TUI driven through
 # tmux. CI runs it on every change and around every release.
@@ -9,8 +11,6 @@
 # (default: Girdle's own default). Everything runs in a temporary directory
 # with its own config, cache and state, so local settings play no part.
 set -uo pipefail
-# The checks below are called through check, which shellcheck can't follow.
-# shellcheck disable=SC2317
 
 bin=$(realpath "${1:?usage: scripts/e2e.sh path/to/girdle}")
 [[ -n ${OPENROUTER_API_KEY:-} ]] || { echo "e2e: OPENROUTER_API_KEY is not set" >&2; exit 1; }
