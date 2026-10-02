@@ -14,6 +14,12 @@ go vet ./...
 
 The normal test suite does not need provider keys. Install ast-grep to exercise its parser-dependent checks; tests skip platform-specific sandbox cases where appropriate. Live gates and benchmarks use real providers and are described separately in the [benchmark guide](docs/benchmarks.md).
 
+`scripts/e2e.sh` runs a built binary end to end against a real LLM: headless requests, a request in a large directory that isn't a repository, and the TUI driven through tmux, including ctrl+c. It needs `OPENROUTER_API_KEY`, jq and tmux, uses Jev when `TYPESAFE_API_KEY` is set, and keeps its config and state in a temporary directory. CI runs it on every pull request, and the release workflow runs it before publishing and again on the published release:
+
+```bash
+go build -o bin/girdle ./cmd/girdle && scripts/e2e.sh bin/girdle
+```
+
 Format changed Go files with `gofmt`. Run focused checks while working, then the build, test and vet commands before submitting. For a behavioral bug, include a regression check that fails without the fix. Documentation changes need valid links, accurate examples and readable diagrams; they do not need tests that merely repeat the prose.
 
 ## Propose a change

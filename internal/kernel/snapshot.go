@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/timbrinded/girdle/internal/checkpoint"
@@ -54,7 +55,10 @@ const (
 // likely to need.
 func TakeSnapshot(ctx context.Context, dir string, budget int, request string, pick Picker) Snapshot {
 	paths := tools.SourceFiles(ctx, dir)
-	if total := textBytes(dir, paths); total > budget {
+	// Past maxListed files the listing is cut short, so the snapshot can't
+	// be whole however small the files are: tens of thousands of empty
+	// files made a prompt of megabytes of file tags.
+	if total := textBytes(dir, paths); total > budget || len(paths) > maxListed {
 		return namedCodeSnapshot(ctx, dir, paths, total, budget/2, request, pick)
 	}
 	var snap Snapshot
@@ -301,6 +305,12 @@ const (
 // prefetchWait.
 const prefetchJudgeable = 128
 
+// prefetchScan bounds the reading of candidate files before Jev is asked.
+// A repository reads in well under a second; a directory that isn't one,
+// such as a home directory, took 44 s, holding up the first LLM call.
+// Past it, Jev judges what has been read.
+const prefetchScan = 2 * time.Second
+
 // definesCode reports whether a file has a top-level definition an outline
 // would list.
 func definesCode(data []byte) bool {
@@ -342,7 +352,11 @@ func outline(data []byte) string {
 func prefetch(ctx context.Context, dir string, paths, shown []string, request string, pick Picker, add func(string) bool, snap *Snapshot) {
 	data := map[string][]byte{}
 	var cands, code []checkpoint.FileOutline
+	deadline := time.Now().Add(prefetchScan)
 	for _, p := range paths {
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			break
+		}
 		if slices.Contains(shown, p) {
 			continue
 		}

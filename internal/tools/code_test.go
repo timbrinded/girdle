@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -189,4 +191,18 @@ func TestParseRange(t *testing.T) {
 func fastTools(dir string) []fantasy.AgentTool {
 	ts, _ := BatchedWithReset(dir, true, Options{})
 	return ts
+}
+
+// Outside a git repository the walk skips hidden directories, such as a
+// home directory's .cache, and stops when its context ends.
+func TestSourceFilesWalk(t *testing.T) {
+	dir := writeTree(t, map[string]string{"main.go": "", "pkg/a.go": "", ".cache/huge/x.bin": "", "node_modules/m/i.js": ""})
+	if got := SourceFiles(t.Context(), dir); !slices.Equal(got, []string{"main.go", "pkg/a.go"}) {
+		t.Fatalf("SourceFiles = %v", got)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got := SourceFiles(ctx, dir); len(got) != 0 {
+		t.Fatalf("a cancelled walk returned %v", got)
+	}
 }

@@ -196,11 +196,18 @@ func IsTestFile(path string) bool {
 }
 
 // skipDirs are never worth walking when dir isn't a git repository:
-// version control data, dependencies and build output.
-var skipDirs = []string{".git", "node_modules", "vendor", ".venv", "venv", "__pycache__", "dist", "build", "target", ".next", ".cache"}
+// dependencies and build output. Hidden directories are skipped too.
+var skipDirs = []string{"node_modules", "vendor", "venv", "__pycache__", "dist", "build", "target"}
+
+// maxWalk bounds the entries walked when dir isn't a git repository. A
+// directory like a home directory holds millions, and walking them all held
+// up every request for minutes (v0.2.0, where the snapshot became the
+// default).
+const maxWalk = 50_000
 
 // SourceFiles returns dir's files relative to dir, sorted. It asks git first,
-// since git knows what is ignored, and walks the tree otherwise.
+// since git knows what is ignored, and otherwise walks the tree, up to
+// maxWalk entries and until ctx ends.
 func SourceFiles(ctx context.Context, dir string) []string {
 	// An empty answer means dir is ignored by an enclosing repository:
 	// walk it instead.
@@ -216,12 +223,16 @@ func SourceFiles(ctx context.Context, dir string) []string {
 		return slices.Compact(paths)
 	}
 	var paths []string
+	walked := 0
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if walked++; walked > maxWalk || ctx.Err() != nil {
+			return filepath.SkipAll
+		}
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != dir && slices.Contains(skipDirs, d.Name()) {
+			if path != dir && (strings.HasPrefix(d.Name(), ".") || slices.Contains(skipDirs, d.Name())) {
 				return filepath.SkipDir
 			}
 			return nil

@@ -366,3 +366,26 @@ func TestANudgeSaysWhatItAsked(t *testing.T) {
 		t.Fatalf("meta %q", meta)
 	}
 }
+
+// A request that won't stop mustn't trap the user: the first ctrl+c asks it
+// to stop, and a second quits.
+func TestSecondCtrlCQuits(t *testing.T) {
+	m := transcriptModel(t, false)
+	cancelled := false
+	m.running, m.cancel = true, func() { cancelled = true }
+
+	if _, cmd := m.Update(key("ctrl+c")); !cancelled || isQuit(cmd) {
+		t.Fatalf("first ctrl+c: cancelled = %v, quit = %v", cancelled, isQuit(cmd))
+	}
+	if _, cmd := m.Update(key("ctrl+c")); !isQuit(cmd) {
+		t.Fatal("second ctrl+c didn't quit")
+	}
+}
+
+func isQuit(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}

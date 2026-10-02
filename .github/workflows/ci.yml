@@ -27,8 +27,28 @@ jobs:
       - run: go test ./...
       - run: go build ./cmd/girdle
 
-  install-script:
+  # Runs the binary against a real LLM, headless and through the TUI in
+  # tmux. Without the TYPESAFE_API_KEY secret it runs without Jev.
+  e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: shellcheck install.sh
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install tmux and ast-grep
+        run: |
+          sudo apt-get install -yq tmux
+          npm install -g @ast-grep/cli
+      - run: CGO_ENABLED=0 go build -trimpath -o girdle ./cmd/girdle
+      - run: scripts/e2e.sh ./girdle
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GIRDLE_MODEL: ${{ vars.GIRDLE_MODEL }}
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: shellcheck install.sh scripts/e2e.sh
