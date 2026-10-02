@@ -35,7 +35,7 @@ girdle -C /path/to/project                          # interactive TUI
 girdle -C /path/to/project -p "fix the failing test" # headless
 ```
 
-The script installs the latest release's binary into `~/.local/bin` after checking its checksum. With Go 1.27.0 or newer you can instead run `go install github.com/timbrinded/girdle/cmd/girdle@latest`.
+The script installs the latest release's binary into `~/.local/bin` after checking its checksum. `girdle update` updates it, and the TUI says when a newer release is out. With Go 1.27.0 or newer you can instead run `go install github.com/timbrinded/girdle/cmd/girdle@latest`.
 
 The configured fallback model is `stealth/space-bunny-alpha`. Treat it as a public-code choice: it is an anonymous model whose data policy and availability may change. Choose another model with `-model` or the TUI picker after checking the provider's data policy. Jev also receives task, code and tool-result context. See [security and data handling](SECURITY.md).
 

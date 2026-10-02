@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/timbrinded/girdle/internal/buildinfo"
 )
 
 // The wordmark, three rows of block letters, and the belt that buckles
@@ -44,6 +46,7 @@ func (m *model) splash(width, height int) string {
 		{"flow", cmp.Or(m.flow, "default")},
 		{"project", tilde(m.dir)},
 		{"log", tilde(m.logPath)},
+		{"version", buildinfo.Version()},
 	}
 	room := min(64, max(16, width-14))
 	for _, r := range rows {

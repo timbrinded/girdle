@@ -27,18 +27,34 @@ import (
 
 // Run starts the TUI and blocks until the user quits. With models, the user
 // can pick OpenRouter models; without, the model is fixed. flow names the
-// flow the session runs, for the welcome screen.
-func Run(ctx context.Context, cfg kernel.Config, logPath string, models *Models, flow string) error {
+// flow the session runs, for the welcome screen. notice, if set, runs in the
+// background at start and returns a note to show, such as a newer release.
+func Run(ctx context.Context, cfg kernel.Config, logPath string, models *Models, flow string, notice func(context.Context) string) error {
 	events := make(chan kernel.Event, 4096)
 	cfg.Emit = func(e kernel.Event) { events <- e }
 	sess := kernel.NewSession(cfg)
 	m := newModel(ctx, sess, events, cfg.Settings, logPath, models)
-	m.flow = flow
+	m.flow, m.notice = flow, notice
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
 
 type eventMsg kernel.Event
+
+// noticeMsg delivers the start-up notice, if there is one.
+type noticeMsg string
+
+// checkNotice runs the start-up notice in the background.
+func (m *model) checkNotice() tea.Cmd {
+	if m.notice == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
+		defer cancel()
+		return noticeMsg(m.notice(ctx))
+	}
+}
 
 type model struct {
 	ctx     context.Context
@@ -47,6 +63,7 @@ type model struct {
 	logPath string
 	dir     string
 	flow    string
+	notice  func(context.Context) string
 	// dirPath matches the project's path where it appears whole.
 	dirPath *regexp.Regexp
 
@@ -210,7 +227,7 @@ func fitHints(width int, hints []hint, sep string) string {
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.waitForEvent(), m.fetchCatalog(), tea.RequestBackgroundColor, m.animate())
+	return tea.Batch(textarea.Blink, m.waitForEvent(), m.fetchCatalog(), m.checkNotice(), tea.RequestBackgroundColor, m.animate())
 }
 
 func (m *model) waitForEvent() tea.Cmd {
@@ -322,6 +339,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.waitForEvent())
 	case catalogMsg:
 		m.takeCatalog(msg)
+	case noticeMsg:
+		if msg != "" {
+			m.add(&block{kind: blockNote, tone: toneNotice, text: string(msg)})
+		}
 	case tea.MouseWheelMsg:
 		if m.picker != nil {
 			switch msg.Button {

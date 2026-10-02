@@ -49,8 +49,9 @@ The start effort comes from explicit `-reasoning` or `-no-route` flags, otherwis
 | `GIRDLE_BORING` | `1` turns the fast flow off unless `-fast` or `-boring` is given |
 | `GIRDLE_JEV_URL` | Base URL for `-jev typesafe`, default `https://api.typesafe.ai`; the client appends `/v1/systemone` |
 | `GIRDLE_JEV_MODEL` | Decision model for `-jev typesafe`, default `jev-1.13.0` |
+| `GIRDLE_NO_UPDATE_CHECK` | Any value stops the TUI checking for a newer release |
 | `XDG_CONFIG_HOME` | Saved models and effort under `girdle/models.json`; default `~/.config` |
-| `XDG_CACHE_HOME` | TUI catalogue under `girdle/openrouter-models.json`; default `~/.cache` |
+| `XDG_CACHE_HOME` | TUI catalogue under `girdle/openrouter-models.json`, and the latest release seen under `girdle/update.json`; default `~/.cache` |
 | `XDG_STATE_HOME` | Logs under `girdle/sessions/`; default `~/.local/state` |
 
 The saved list contains model IDs, their last-picked timestamps, and the default model and effort. It contains no API keys. Selecting a model in the picker saves it; starting with a one-off `-model` does not save that choice. Back up `models.json` if you want to preserve choices before resetting them.

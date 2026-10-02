@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/timbrinded/girdle/internal/kernel"
 	"github.com/timbrinded/girdle/internal/models"
 	"github.com/timbrinded/girdle/internal/tui"
+	"github.com/timbrinded/girdle/internal/update"
 )
 
 // defaultModel is free on OpenRouter for now, and it is what the fast flow
@@ -109,6 +111,13 @@ func run() int {
 	if *showVersion {
 		fmt.Println("girdle", buildinfo.Version())
 		return exitDone
+	}
+	switch flag.Arg(0) {
+	case "":
+	case "update":
+		return selfUpdate()
+	default:
+		return fail(fmt.Errorf("unknown command %q: the only command is update, and girdle -h lists the flags", flag.Arg(0)))
 	}
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
@@ -228,7 +237,10 @@ func run() int {
 				},
 			}
 		}
-		if err := tui.Run(ctx, cfg, path, picker, flowLabel(fastFlow, cfg.Race)); err != nil {
+		notice := func(ctx context.Context) string {
+			return update.GitHub.Notice(ctx, buildinfo.Version(), update.CachePath())
+		}
+		if err := tui.Run(ctx, cfg, path, picker, flowLabel(fastFlow, cfg.Race), notice); err != nil {
 			return fail(err)
 		}
 		return exitDone
@@ -389,6 +401,40 @@ func zenEffort(e checkpoint.Effort) fantasy.ProviderOptions {
 	opts := openaicompat.NewProviderOptions(&openaicompat.ProviderOptions{ReasoningEffort: &re})
 	maps.Copy(opts, openai.NewResponsesProviderOptions(&openai.ResponsesProviderOptions{ReasoningEffort: &re}))
 	return opts
+}
+
+// selfUpdate replaces the running binary with the latest release.
+func selfUpdate() int {
+	current := buildinfo.Version()
+	if !update.IsRelease(current) {
+		return fail(fmt.Errorf("this build (%s) isn't a release, so girdle update leaves it alone; install a release with: curl -fsSL https://raw.githubusercontent.com/timbrinded/girdle/master/install.sh | sh", current))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	latest, err := update.GitHub.LatestTag(ctx)
+	if err != nil {
+		return fail(fmt.Errorf("finding the latest release: %w", err))
+	}
+	if !update.Newer(latest, current) {
+		fmt.Printf("girdle %s is the latest release\n", current)
+		return exitDone
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	fmt.Printf("Updating girdle %s to %s\n", current, latest)
+	if err := update.GitHub.Install(ctx, latest, exe); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			err = fmt.Errorf("%w; %s isn't writable, so rerun with the permissions it needs", err, filepath.Dir(exe))
+		}
+		return fail(fmt.Errorf("update: %w", err))
+	}
+	fmt.Printf("Updated %s to girdle %s\n", exe, latest)
+	return exitDone
 }
 
 func defaultLogPath() string {
