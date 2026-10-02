@@ -68,11 +68,13 @@ EOF
 	echo "$dir"
 }
 
-# headless runs one request with -p in dir. Its output goes to $work/out,
-# and the outcomes it accepts are exit codes 0 (done) and 2 (over to you).
+# headless runs one request with -p in dir, with any further arguments as
+# flags. Its output goes to $work/out, and the outcomes it accepts are exit
+# codes 0 (done) and 2 (over to you).
 headless() {
 	local dir=$1 prompt=$2 limit=${3:-150}
-	timeout $((limit + 30)) "$bin" -C "$dir" -timeout "${limit}s" ${flags[@]+"${flags[@]}"} -p "$prompt" >"$work/out" 2>&1
+	shift $(($# < 3 ? $# : 3))
+	timeout $((limit + 30)) "$bin" -C "$dir" -timeout "${limit}s" ${flags[@]+"${flags[@]}"} "$@" -p "$prompt" >"$work/out" 2>&1
 	local code=$?
 	if [[ $code != 0 && $code != 2 ]]; then
 		echo "  exit code $code; output ends:" >&2
@@ -164,6 +166,44 @@ tui_question() {
 		pane question "GIRDLE_EXITED 0" 10
 }
 
+# conversation_id is the conversation the last headless run says to carry on.
+conversation_id() {
+	sed -n 's/^carry it on with: girdle -resume //p' "$work/out"
+}
+
+# -c carries on the latest conversation in the directory: the model sees
+# the earlier request, and the conversation keeps its ID.
+headless_continue() {
+	local dir first
+	dir=$(fixture remember)
+	headless "$dir" "Remember the codeword PLUMTREE for later. Reply with just OK." 60 || return 1
+	first=$(conversation_id)
+	[[ -n $first ]] || { echo "  no conversation ID in the output" >&2; return 1; }
+	headless "$dir" "What codeword did I ask you to remember? Reply with just the word, in lowercase." 60 -c &&
+		grep -q plumtree "$work/out" &&
+		[[ $(conversation_id) == "$first" ]]
+}
+
+# /resume in the TUI lists the directory's conversations and carries one on:
+# it shows the earlier requests, and the next request sees them.
+tui_resume() {
+	local dir
+	dir=$(fixture tuiresume)
+	headless "$dir" "Remember the codeword QUINCE for later. Reply with just OK." 60 || return 1
+	tui resume "$dir" || return 1
+	tmux -L "$sock" send-keys -t resume "/resume" Enter
+	pane resume "Carry on a conversation" 10 && pane resume "Remember the codeword QUINCE" 1 || return 1
+	tmux -L "$sock" send-keys -t resume Enter
+	pane resume "carrying on the conversation" 10 || return 1
+	tmux -L "$sock" send-keys -t resume "What codeword did I ask you to remember? Reply with just the word, in lowercase." Enter
+	# The replayed run already shows "done", and the request QUINCE: wait
+	# for the answer in lowercase, then for the prompt to be free again.
+	pane resume "quince" 150 &&
+		pane resume "Ask Girdle" 60 &&
+		tmux -L "$sock" send-keys -t resume C-c &&
+		pane resume "GIRDLE_EXITED 0" 10
+}
+
 # In the large directory, ctrl+c stops a running request, and a second
 # quits. v0.2.0 never got past its snapshot there, and ignored ctrl+c.
 tui_ctrl_c() {
@@ -184,6 +224,8 @@ check "headless change with a test" change
 check "headless in a large directory that isn't a repository" not_a_repo
 check "headless in the home directory skips the snapshot and says so" home_dir
 check "headless among many tiny files keeps the prompt small" many_files
+check "headless -c carries on the latest conversation" headless_continue
 check "TUI question, then ctrl+c quits" tui_question
+check "TUI /resume carries on an earlier conversation" tui_resume
 check "TUI ctrl+c stops a request in a large directory, then quits" tui_ctrl_c
 exit $failed

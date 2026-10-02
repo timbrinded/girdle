@@ -28,6 +28,10 @@ func (m *model) pickerView(width, height int) string {
 			keys = []hint{{"enter set", 0}, {"↑/↓ choose", 2}, {"tab models", 3}, {"esc back", 1}}
 		}
 		foot = []string{"", dimStyle.Render(fitHints(inner, keys, " · "))}
+	case pickConversation:
+		head = []string{titleStyle.Render("Carry on a conversation") + dimStyle.Render(" · "+tilde(m.dir)), p.search.View(), ""}
+		keys := []hint{{"enter carry on", 0}, {"↑/↓ choose", 2}, {"esc close", 1}}
+		foot = []string{"", dimStyle.Render(m.counter()), dimStyle.Render(fitHints(inner, keys, " · "))}
 	default:
 		head = []string{titleStyle.Render("Select model") + dimStyle.Render(" · "+m.catalogSummary()), p.search.View()}
 		switch {
@@ -71,9 +75,13 @@ func (m *model) visibleRows(width, room int) []string {
 		}
 		shown := p.rows[start:min(len(p.rows), start+room)]
 		// An effort's name fits in 8 columns; a model's column fits the
-		// longest name shown, up to half the width.
+		// longest name shown, up to half the width, and a conversation's
+		// first request takes what its age and ID leave.
 		col := 8
-		if p.mode == pickModel {
+		switch p.mode {
+		case pickConversation:
+			col = max(12, width-26)
+		case pickModel:
 			for _, r := range shown {
 				col = max(col, lipgloss.Width(m.rowName(r)))
 			}
@@ -112,12 +120,17 @@ func (m *model) drawRow(r row, selected bool, col int) string {
 		mark = "✓ "
 	}
 	name, about := r.id, ""
-	if m.picker.mode == pickEffort {
+	switch m.picker.mode {
+	case pickEffort:
 		about = effortAbout[r.id]
 		if r.id == models.EffortAuto && m.routed != "" {
 			about += ", latest " + string(m.routed)
 		}
-	} else {
+	case pickConversation:
+		if c, ok := m.listed(r.id); ok {
+			name, about = c.Title, conversationAbout(c)
+		}
+	default:
 		name, about = m.rowName(r), m.facts(r.id)
 	}
 	name = ansi.Truncate(name, col, "…")

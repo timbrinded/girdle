@@ -29,12 +29,24 @@ import (
 // can pick OpenRouter models; without, the model is fixed. flow names the
 // flow the session runs, for the welcome screen. notice, if set, runs in the
 // background at start and returns a note to show, such as a newer release.
-func Run(ctx context.Context, cfg kernel.Config, logPath string, models *Models, flow string, notice func(context.Context) string) error {
+// resume says where earlier conversations are, and which to carry on at
+// start, if any.
+func Run(ctx context.Context, cfg kernel.Config, logPath string, models *Models, resume Resume, flow string, notice func(context.Context) string) error {
 	events := make(chan kernel.Event, 4096)
 	cfg.Emit = func(e kernel.Event) { events <- e }
-	sess := kernel.NewSession(cfg)
+	var sess *kernel.Session
+	if resume.Start != nil {
+		sess = kernel.ResumeSession(cfg, *resume.Start)
+	} else {
+		sess = kernel.NewSession(cfg)
+	}
 	m := newModel(ctx, sess, events, cfg.Settings, logPath, models)
 	m.flow, m.notice = flow, notice
+	m.cfg, m.logDir = cfg, resume.LogDir
+	defer m.closeLogs()
+	if resume.Start != nil {
+		m.replay(*resume.Start)
+	}
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
@@ -66,6 +78,14 @@ type model struct {
 	notice  func(context.Context) string
 	// dirPath matches the project's path where it appears whole.
 	dirPath *regexp.Regexp
+
+	// cfg builds the sessions /resume carries on, in the logs under
+	// logDir. convs are those the picker lists, and logs the logs /resume
+	// opened.
+	cfg    kernel.Config
+	logDir string
+	convs  []kernel.Conversation
+	logs   []*kernel.Log
 
 	// settings are what the next request uses, and active what the running
 	// one started with. canRoute is set when Jev can choose efforts, and
@@ -181,9 +201,14 @@ func (m *model) setPlaceholder() {
 func (m *model) keyHint() string {
 	width := m.width - 2
 	if strings.HasPrefix(m.input.Value(), "/") {
-		hints := []hint{{"/model [search | id [effort]]  pick a model", 0}, {"/effort [level]  set the reasoning effort", 1}}
+		hints := []hint{{"/model [search | id [effort]]  pick a model", 0}, {"/effort [level]  set the reasoning effort", 1}, {"/resume [search]  carry on a conversation", 2}}
 		if m.models == nil {
 			hints = hints[1:]
+		}
+		// Once the start of a command is typed, only its hints are left.
+		typed, _, _ := strings.Cut(m.input.Value(), " ")
+		if left := slices.DeleteFunc(slices.Clone(hints), func(h hint) bool { return !strings.HasPrefix(h.text, typed) }); len(left) > 0 {
+			hints = left
 		}
 		return fitHints(width, hints, "   ·   ")
 	}
@@ -373,7 +398,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		before := p.search.Value()
 		p.search, cmd = p.search.Update(msg)
 		cmds = append(cmds, cmd)
-		if p.search.Value() != before && p.mode == pickModel {
+		if p.search.Value() != before && p.mode != pickEffort {
 			p.note = ""
 			m.refind(true)
 		}
@@ -415,6 +440,8 @@ func (m *model) command(text string) (tea.Cmd, bool) {
 		}
 		m.setEffort(arg)
 		return nil, true
+	case "/resume":
+		return m.openConversations(arg), true
 	}
 	return nil, false
 }
@@ -436,6 +463,15 @@ func (m *model) start(prompt string) tea.Cmd {
 }
 
 func (m *model) handleEvent(e kernel.Event) {
+	// Deltas come fast; the next frame draws them.
+	if m.show(e) && e.Type != kernel.EventTextDelta {
+		m.refresh()
+	}
+}
+
+// show adds what an event shows to the transcript, as it happens or when a
+// conversation is shown again, and reports whether it changed anything.
+func (m *model) show(e kernel.Event) bool {
 	switch e.Type {
 	case kernel.EventTextDelta:
 		if m.reply == nil {
@@ -443,8 +479,6 @@ func (m *model) handleEvent(e kernel.Event) {
 			m.add(m.reply)
 		}
 		m.reply.text += e.Text
-		// Deltas come fast; the next frame draws them.
-		return
 	case kernel.EventAssistantText:
 		// A step's text arrives whole as it ends, after any tool calls; it
 		// replaces what streamed, if anything did.
@@ -530,13 +564,14 @@ func (m *model) handleEvent(e kernel.Event) {
 			}
 		}
 		label, t := outcome(e.Outcome, e.Reason)
-		m.add(&block{kind: blockEnd, tone: t, label: label, meta: m.runTime()})
+		took := elapsed(e.Time.Sub(m.runStart))
+		m.add(&block{kind: blockEnd, tone: t, label: label, meta: took})
 		if m.changed() {
 			m.routed = ""
 		}
 		m.running, m.stopping = false, false
 		m.setPlaceholder()
-		m.status, m.statusTone = label+" · "+m.runTime(), t
+		m.status, m.statusTone = label+" · "+took, t
 		if e.Usage != nil {
 			m.usage = usageLine(*e.Usage)
 		}
@@ -544,8 +579,10 @@ func (m *model) handleEvent(e kernel.Event) {
 		m.add(&block{kind: blockError, text: e.Text})
 	case kernel.EventNotice:
 		m.add(&block{kind: blockNote, tone: toneNotice, text: e.Text})
+	default:
+		return false
 	}
-	m.refresh()
+	return true
 }
 
 // outcome says how a run ended, without repeating a reason that only

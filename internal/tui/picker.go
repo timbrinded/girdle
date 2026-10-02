@@ -12,15 +12,17 @@ import (
 	"github.com/timbrinded/girdle/internal/models"
 )
 
-// The picker lists the models the user's key can use, or the reasoning
-// efforts the model in use accepts, for the user to choose from. Choosing
-// acts through models.go and effort.go; pickerview.go draws it.
+// The picker lists the models the user's key can use, the reasoning
+// efforts the model in use accepts, or the earlier conversations in this
+// directory, for the user to choose from. Choosing acts through models.go,
+// effort.go and resume.go; pickerview.go draws it.
 
 type pickerMode int
 
 const (
-	pickModel  pickerMode = iota // every model the key can use
-	pickEffort                   // the reasoning efforts the model in use accepts
+	pickModel        pickerMode = iota // every model the key can use
+	pickEffort                         // the reasoning efforts the model in use accepts
+	pickConversation                   // earlier conversations in this directory, to carry on
 )
 
 // A row of the picker is a choice, a model ID or an effort setting, or a
@@ -76,8 +78,11 @@ func (m *model) sizePicker() {
 
 // currentChoice is the row that stands for what is in use.
 func (m *model) currentChoice() string {
-	if m.picker.mode == pickEffort {
+	switch m.picker.mode {
+	case pickEffort:
 		return m.effortSetting()
+	case pickConversation:
+		return ""
 	}
 	return m.settings.ModelName
 }
@@ -93,6 +98,8 @@ func (m *model) refind(top bool) {
 		for _, c := range m.effortChoices() {
 			p.rows = append(p.rows, row{id: c})
 		}
+	case pickConversation:
+		p.rows = m.conversationRows(strings.TrimSpace(p.search.Value()))
 	default:
 		p.rows, p.available = m.modelRows(strings.TrimSpace(p.search.Value()))
 	}
@@ -223,7 +230,11 @@ func (m *model) updatePicker(msg tea.KeyPressMsg) tea.Cmd {
 	case "pgdown":
 		p.step(pageSize)
 		return nil
-	case "shift+tab":
+	}
+	if p.mode == pickConversation {
+		return m.updateConversationPicker(msg)
+	}
+	if msg.String() == "shift+tab" {
 		m.cycleEffort()
 		if p.mode == pickEffort {
 			m.refind(false)
@@ -267,16 +278,36 @@ func (m *model) updatePicker(msg tea.KeyPressMsg) tea.Cmd {
 			m.toggleYours(id)
 		}
 	default:
-		before := p.search.Value()
-		var cmd tea.Cmd
-		p.search, cmd = p.search.Update(msg)
-		if p.search.Value() != before {
-			p.note = ""
-			m.refind(true)
-		}
-		return cmd
+		return m.typeSearch(msg)
 	}
 	return nil
+}
+
+// typeSearch passes a key to the picker's search, and finds again if it
+// changed the query.
+func (m *model) typeSearch(msg tea.KeyPressMsg) tea.Cmd {
+	p := m.picker
+	before := p.search.Value()
+	var cmd tea.Cmd
+	p.search, cmd = p.search.Update(msg)
+	if p.search.Value() != before {
+		p.note = ""
+		m.refind(true)
+	}
+	return cmd
+}
+
+func (m *model) updateConversationPicker(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "ctrl+l":
+		return m.closePicker()
+	case "enter":
+		if c, ok := m.listed(m.picker.selected()); ok && m.resume(c) {
+			return m.closePicker()
+		}
+		return nil
+	}
+	return m.typeSearch(msg)
 }
 
 func (m *model) updateEffortPicker(msg tea.KeyPressMsg) tea.Cmd {

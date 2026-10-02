@@ -55,10 +55,12 @@ type Session struct {
 	pruned  map[string]bool
 	agent   fantasy.Agent
 	history []fantasy.Message
-	steps   []string
-	mu      sync.Mutex // guards usage while LLM calls run concurrently
-	emitMu  sync.Mutex // serialises emit
-	usage   Usage
+	// recorded counts the messages of history in the event log (record).
+	recorded int
+	steps    []string
+	mu       sync.Mutex // guards usage while LLM calls run concurrently
+	emitMu   sync.Mutex // serialises emit
+	usage    Usage
 	// callOptions override the agent's provider options for this run.
 	callOptions fantasy.ProviderOptions
 	// pendingRoute delivers Jev's route when the request didn't wait for
@@ -125,8 +127,11 @@ func (s *Session) stopTurn(h halt) {
 }
 
 // NewSession builds a session with the built-in tools and the girdle tool.
-func NewSession(cfg Config) *Session {
-	s := &Session{ID: uuid.New().String(), want: cfg, cfg: cfg.resolved(), edited: map[string]bool{}}
+func NewSession(cfg Config) *Session { return newSession(cfg, uuid.New().String(), nil) }
+
+// newSession builds a session that starts from history, already recorded.
+func newSession(cfg Config, id string, history []fantasy.Message) *Session {
+	s := &Session{ID: id, want: cfg, cfg: cfg.resolved(), edited: map[string]bool{}, history: history, recorded: len(history)}
 	s.canAuto = s.cfg.canAutoEffort()
 	cfg = s.cfg
 	s.buildTools()
@@ -136,6 +141,9 @@ func NewSession(cfg Config) *Session {
 	meta["dir"] = cfg.Dir
 	meta["race"] = fmt.Sprint(max(cfg.Race, 1))
 	maps.Copy(meta, s.settingsMeta())
+	if len(history) > 0 {
+		meta["resumed"] = fmt.Sprint(len(history))
+	}
 	s.emit(Event{Type: EventSessionStart, Meta: meta})
 	if where := unindexed(cfg.Dir); where != "" && s.want.Snapshot {
 		s.emit(Event{Type: EventNotice, Text: "Girdle is running in " + where + ", so it won't read files up front. Start it in a project folder, or pass -C, to send the project with each request."})
@@ -178,6 +186,7 @@ func usageOf(u fantasy.Usage) Usage {
 // Seed prepends an existing conversation, for scenarios that start midway.
 func (s *Session) Seed(msgs []fantasy.Message) {
 	s.history = append(s.history, msgs...)
+	s.record()
 }
 
 // Run sends prompt and works until the task is done or the user is needed.
@@ -464,6 +473,7 @@ func (s *Session) turn(ctx context.Context, task string, requirements []string) 
 	for _, st := range res.Steps {
 		s.history = append(s.history, st.Messages...)
 	}
+	s.record()
 	// Each call's tokens were counted as it finished; this is the turn's
 	// total, for the log.
 	u := usageOf(res.TotalUsage)
@@ -551,6 +561,7 @@ func (s *Session) noteRace(r race.Result) {
 func (s *Session) end(o Outcome, reason string) (Outcome, string) {
 	// Log a route the request didn't wait for, if it came.
 	s.takeRoute(context.Background(), false)
+	s.record()
 	u := s.Usage()
 	s.emit(Event{Type: EventRunEnd, Outcome: o, Reason: reason, Usage: &u})
 	return o, reason

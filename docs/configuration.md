@@ -72,6 +72,8 @@ The saved list contains model IDs, their last-picked timestamps, and the default
 | `-max-steps n` | `60` | LLM steps per turn, rather than a whole-session limit |
 | `-timeout duration` | `0` | Headless request deadline, such as `10m`; zero has no deadline |
 | `-log path` | New session file | Append the event log at this path |
+| `-c` | `false` | Carry on the latest conversation in this directory; see [usage](usage.md#carrying-on-a-conversation) |
+| `-resume id` | Empty | Carry on the conversation in this directory with this ID, or a unique start of it |
 | `-json` | `false` | Headless JSONL events on stdout |
 | `-version` | `false` | Print the version and exit |
 | `-seed path` | Empty | Load a JSON object with `task` and `messages`, each containing `role` (`user` or `assistant`) and `text` |
@@ -88,7 +90,7 @@ The [gate seed](../bench/scenarios/announce-then-stop.json) is a concrete `-seed
 }
 ```
 
-The loader converts these text entries into Fantasy messages. A seed is a test input, rather than a way to restore a session from its event log.
+The loader converts these text entries into Fantasy messages. A seed is a test input; `-c` and `-resume` restore a session from its event log, and can't be combined with `-seed` or `-log`.
 
 ## Fast flow
 
