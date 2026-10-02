@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/fantasy"
+
 	"github.com/timbrinded/girdle/internal/checkpoint"
 )
 
@@ -38,6 +40,7 @@ const (
 	EventLeftovers     EventType = "leftovers"  // what the request wants gone (intent), Jev's view of each mention (must_change), and what is still there (found)
 	EventReproduce     EventType = "reproduce"  // whether a reproduce command that failed without the fix ran its test
 	EventNudge         EventType = "nudge"
+	EventMessages      EventType = "messages" // what a request added to the history, logged only, to carry the conversation on later
 	EventRunEnd        EventType = "run_end"
 	EventError         EventType = "error"
 )
@@ -78,6 +81,8 @@ type Event struct {
 	Outcome    Outcome                        `json:"outcome,omitempty"`
 	Reason     string                         `json:"reason,omitempty"`
 	Meta       map[string]string              `json:"meta,omitempty"`
+	// Messages is set on messages events.
+	Messages []fantasy.Message `json:"messages,omitempty"`
 	// TTFTMS is how long a step waited for its first streamed token, and
 	// DurationMS how long the LLM call took in all.
 	TTFTMS     int64 `json:"ttft_ms,omitzero"`

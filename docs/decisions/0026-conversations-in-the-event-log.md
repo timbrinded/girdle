@@ -1,0 +1,9 @@
+# 0026 Conversations are carried on from the event log
+
+**Date:** 2026-10-02 · **Branch:** `feat/resume-conversations`
+
+- **Decision.** `-c`, `-resume <id>` and the TUI's `/resume` carry on an earlier conversation in the same directory. A conversation lives in its session's event log. Each request logs the messages it added to the LLM's history as a `messages` event, in Fantasy's own JSON form. Carrying on reads them back, keeps the session ID and appends to the same log. No separate store or index is needed. The listing reads each log only as far as its first request, and sorts by when the file last changed.
+- **Why not a separate `~/.girdle` store.** Girdle already keeps its state under the XDG directories, with logs under `$XDG_STATE_HOME/girdle/sessions`, one file per session, recording the directory each ran in. A second store would duplicate that and could drift from it. One file per conversation also keeps a conversation's decisions and its history together for later tuning.
+- **Why not rebuild the history from the existing events.** `tool_result` events are clipped to 4,000 characters, and requests are logged without the snapshot sent with them. Rebuilding from them would give the LLM a different history from the one it had. The `messages` events are exact.
+- **Model.** A carried-on conversation uses the model and effort chosen now. Its history goes through `portable`, as for a model switch. `portable` handles each assistant message with the tool message after it, so applying it to the logged messages gives the same history as applying it during the session.
+- **Cost.** Logs grow by the full history, including each request's snapshot (up to 64 KiB). Logs written before this change hold no messages and can't be carried on. Logs written elsewhere with `-log` aren't listed.

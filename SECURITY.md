@@ -24,7 +24,7 @@ Provider keys are read from environment variables and used for authentication. T
 
 ## Local logs
 
-Session logs can contain prompts, source code, tool arguments/results, reasoning summaries and checkpoint state. Girdle clips some fields but does not redact sensitive content. Logs are created with mode `0644`, subject to the process umask; directory creation uses `0755`. Choose an appropriately private directory and umask for sensitive sessions.
+Session logs can contain prompts, source code, tool arguments/results, reasoning summaries and checkpoint state. They also hold the LLM's full conversation history, unclipped, including the project files sent with each request, so that a conversation can be carried on later. Girdle clips some fields but does not redact sensitive content. Logs are created with mode `0644`, subject to the process umask; directory creation uses `0755`. Choose an appropriately private directory and umask for sensitive sessions.
 
 Logs default to `~/.local/state/girdle/sessions/`, respecting `XDG_STATE_HOME`. `-log` can place them elsewhere, and `-json` also emits events to stdout. Review and redact logs before sharing them. See [usage](docs/usage.md#session-logs).
 

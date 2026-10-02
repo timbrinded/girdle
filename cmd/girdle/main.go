@@ -72,6 +72,8 @@ func run() int {
 		jevVia      = flag.String("jev", cmp.Or(os.Getenv("GIRDLE_JEV"), "typesafe"), "where to call Jev: typesafe (TYPESAFE_API_KEY, pinned "+jev.DefaultModel+") or zen (ZEN_API_KEY, "+zenJevModel+")")
 		reasoning   = flag.String("reasoning", "medium", "reasoning effort when Jev can't choose one: none, minimal, low, medium, high, xhigh or max, fitted to what the model accepts")
 		logPath     = flag.String("log", "", "event log path (default: a new file under ~/.local/state/girdle/sessions)")
+		cont        = flag.Bool("c", false, "carry on the latest conversation in this directory")
+		resume      = flag.String("resume", "", "carry on the conversation in this directory with this ID, or the start of it; /resume in the TUI lists them")
 		jsonOut     = flag.Bool("json", false, "headless: print events as JSON lines")
 		seedPath    = flag.String("seed", "", "headless: start from a seeded conversation (JSON)")
 		noJev       = flag.Bool("no-checkpoints", false, "disable Jev checkpoints: stop at every turn end")
@@ -135,6 +137,10 @@ func run() int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	saved, err := savedConversation(workDir, *cont, *resume, *seedPath != "", *logPath != "")
+	if err != nil {
+		return fail(err)
+	}
 
 	if *provider == "zen" && *model == "" {
 		return fail(errors.New("-provider zen needs -model: Zen's free models only work inside OpenCode, so pick a paid one"))
@@ -220,6 +226,9 @@ func run() int {
 	}
 
 	path := cmp.Or(*logPath, defaultLogPath())
+	if saved != nil {
+		path = saved.Log
+	}
 	log, err := kernel.OpenLog(path)
 	if err != nil {
 		return fail(fmt.Errorf("open event log: %w", err))
@@ -240,7 +249,8 @@ func run() int {
 		notice := func(ctx context.Context) string {
 			return update.GitHub.Notice(ctx, buildinfo.Version(), update.CachePath())
 		}
-		if err := tui.Run(ctx, cfg, path, picker, flowLabel(fastFlow, cfg.Race), notice); err != nil {
+		resumer := tui.Resume{LogDir: sessionsDir(), Start: saved}
+		if err := tui.Run(ctx, cfg, path, picker, resumer, flowLabel(fastFlow, cfg.Race), notice); err != nil {
 			return fail(err)
 		}
 		return exitDone
@@ -255,7 +265,12 @@ func run() int {
 		defer cancel()
 	}
 	cfg.Emit = headlessPrinter(*jsonOut)
-	sess := kernel.NewSession(cfg)
+	var sess *kernel.Session
+	if saved != nil {
+		sess = kernel.ResumeSession(cfg, *saved)
+	} else {
+		sess = kernel.NewSession(cfg)
+	}
 
 	var outcome kernel.Outcome
 	var reason string
@@ -274,7 +289,7 @@ func run() int {
 		outcome, reason = sess.Run(ctx, *prompt)
 	}
 	if !*jsonOut {
-		fmt.Fprintf(os.Stderr, "\n[%s: %s] event log: %s\n", outcome, reason, path)
+		fmt.Fprintf(os.Stderr, "\n[%s: %s] event log: %s\ncarry it on with: girdle -resume %s\n", outcome, reason, path, sess.ID)
 	}
 	switch outcome {
 	case kernel.OutcomeDone:
@@ -437,14 +452,53 @@ func selfUpdate() int {
 	return exitDone
 }
 
-func defaultLogPath() string {
+// sessionsDir is where event logs go by default, and so where the
+// conversations they keep are looked for.
+func sessionsDir() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
 	}
+	return filepath.Join(base, "girdle", "sessions")
+}
+
+func defaultLogPath() string {
 	name := time.Now().Format("2006-01-02T15-04-05") + fmt.Sprintf("-%d.jsonl", os.Getpid())
-	return filepath.Join(base, "girdle", "sessions", name)
+	return filepath.Join(sessionsDir(), name)
+}
+
+// savedConversation reads back the conversation that -c or -resume asks to
+// carry on, or returns nil if neither does.
+func savedConversation(dir string, latest bool, id string, seeded, logSet bool) (*kernel.Saved, error) {
+	switch {
+	case !latest && id == "":
+		return nil, nil
+	case latest && id != "":
+		return nil, errors.New("-c and -resume both pick a conversation: use one")
+	case seeded:
+		return nil, errors.New("-seed starts a conversation of its own, so it can't be combined with -c or -resume")
+	case logSet:
+		return nil, errors.New("a conversation carries on in its own event log, so -log can't be combined with -c or -resume")
+	}
+	convs, err := kernel.Conversations(sessionsDir(), dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(convs) == 0 {
+		return nil, fmt.Errorf("no earlier conversation in %s to carry on", dir)
+	}
+	c := convs[0]
+	if id != "" {
+		if c, err = kernel.FindConversation(convs, id); err != nil {
+			return nil, err
+		}
+	}
+	saved, err := kernel.LoadConversation(c)
+	if err != nil {
+		return nil, fmt.Errorf("can't carry on conversation %s: %w", c.ID, err)
+	}
+	return &saved, nil
 }
 
 // headlessPrinter prints a readable transcript, or JSON lines with -json.

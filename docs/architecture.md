@@ -22,7 +22,7 @@ Girdle separates three responsibilities: the LLM produces work, Jev judges meani
 
 ## Request lifecycle
 
-1. **Start.** A session resolves feature dependencies once. Each request applies queued model/effort settings, clears request-local facts and records the user's message. History carries over between requests in the TUI.
+1. **Start.** A session resolves feature dependencies once. Each request applies queued model/effort settings, clears request-local facts and records the user's message. History carries over between requests in the TUI, and a later run can carry it on from the event log.
 2. **Prepare context.** With snapshot enabled, the request includes repository text within a budget. Larger repositories include a file list, agent instructions and code named in the request; prefetch can add files judged relevant by Jev.
 3. **Route effort.** Jev judges request complexity and whether it asks for tests. With auto effort, the answer chooses reasoning effort. Pinned effort still permits background request classification. Speculation starts a guessed-effort call but holds its answer until routing is known; a different routed effort causes a restart before tools run.
 4. **Execute.** Fantasy streams the LLM's answer and dispatches tool calls. The kernel records calls/results, changed paths, checks, usage and timing. The tripwire runs before shell execution.
@@ -60,6 +60,6 @@ Feature prerequisites live in [Config.resolved](../internal/kernel/config.go). A
 
 The shell tripwire combines parsed facts, a code floor and Jev judgement. Without ast-grep's parse, every shell command goes to Jev. This is not an OS sandbox, and direct file tools can accept absolute paths. The optional macOS restrictions constrain shell network/read access for benchmarks. [Security](../SECURITY.md) describes the exact boundaries and provider data flow.
 
-The kernel serializes events into an append-only JSONL file. The TUI receives streamed text too, but text deltas are omitted from persistent logs. Saved model choices and the cached catalogue live separately under XDG config/cache directories. The [usage guide](usage.md#session-logs) describes the events and locations.
+The kernel serializes events into an append-only JSONL file. At each turn and request end it also logs the messages added to the LLM's history since it last did, so `-c`, `-resume` and `/resume` can rebuild the history and carry the conversation on in the same file. The TUI receives streamed text too, but text deltas are omitted from persistent logs. Saved model choices and the cached catalogue live separately under XDG config/cache directories. The [usage guide](usage.md#session-logs) describes the events and locations.
 
 Historical choices, removed experiments and measurements are indexed in [decisions](decisions/README.md) and [research](../research/README.md).

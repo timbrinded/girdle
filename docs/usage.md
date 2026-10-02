@@ -8,6 +8,19 @@ Run `girdle -C /path/to/project`, type a request in the box at the bottom and pr
 
 The transcript shows your requests, the agent's replies (rendered Markdown), a summary of its reasoning for each step, each tool call with its result, and Jev's decisions. Ctrl+O shows reasoning and tool output in full. The status line shows what a running request is doing and how long it has taken, then how the last one ended and the session's token use. The TUI follows the terminal's light or dark background.
 
+## Carrying on a conversation
+
+Each conversation is kept in its session log, so a later run can pick it up in the same project directory:
+
+| Command | Action |
+| --- | --- |
+| `girdle -c` | Open the TUI on the latest conversation in this directory |
+| `girdle -resume <id>` | Open the TUI on the conversation with this ID, or a unique start of it |
+| `/resume [search]` in the TUI | List this directory's earlier conversations, newest first, and carry on the one you pick |
+| `girdle -c -p "…"`, `girdle -resume <id> -p "…"` | Add a headless request to that conversation |
+
+The TUI shows the conversation as it ran, then the next request continues it with the same history the LLM had. A headless run ends by printing the command that carries its conversation on. The conversation keeps its ID and its log: later requests append to the same file. It uses the model and effort chosen now, not the ones it ran with, and its history is converted as for a model switch. Only conversations whose logs are in the default directory are listed, and logs written before v0.3.0 hold no messages, so they can't be carried on. `/resume` waits until no request is running.
+
 Model and effort changes take effect on the **next request**, including changes queued while a request runs. A model switch converts the existing history for the new provider by dropping earlier reasoning and serializing parallel tool calls with their results.
 
 ## Models and reasoning effort
@@ -26,6 +39,7 @@ The model picker is available with the OpenRouter provider. It fetches the model
 | Shift+Tab outside the picker | Cycle `auto` and the efforts the current model accepts |
 | `/model <id> [effort]` | Select a known model directly, optionally setting effort |
 | `/effort` or `/effort <level>` | Open the effort picker or set effort |
+| `/resume [search]` | Carry on an earlier conversation; see [above](#carrying-on-a-conversation) |
 
 Your models appear first; other models are grouped by provider. Each row shows catalogue pricing, context size and supported efforts. Search words match model IDs and names.
 
@@ -70,8 +84,9 @@ The event definition is [internal/kernel/events.go](../internal/kernel/events.go
 | `decision`, `route`, `heartbeat`, `tripwire` | Checkpoint state, answers, policy rule, latency and Jev model when returned |
 | `snapshot`, `crosscheck`, `compact`, `leftovers`, `reproduce` | Evidence and outcomes for the corresponding features |
 | `nudge`, `error`, `run_end` | Continuation messages, errors and terminal outcome with reason |
+| `messages` | The messages each request added to the LLM's history, in full, for carrying the conversation on |
 
-Streaming `text_delta` events, and the `tool_start` events that mark the LLM beginning to write a tool call, reach the TUI but are excluded from both JSON output and the persistent log. Concurrent event writes are serialized within the session.
+Streaming `text_delta` events, and the `tool_start` events that mark the LLM beginning to write a tool call, reach the TUI but are excluded from both JSON output and the persistent log. `messages` events are the reverse: they are only written to the log. Concurrent event writes are serialized within the session.
 
 For example, inspect a log with Python's standard library:
 

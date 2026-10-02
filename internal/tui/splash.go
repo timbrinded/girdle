@@ -55,6 +55,7 @@ func (m *model) splash(width, height int) string {
 	about = append(about, "",
 		dimStyle.Render("Type a request below and press ")+textStyle.Render("enter")+dimStyle.Render("."),
 		dimStyle.Render("ctrl+l picks a model · shift+tab changes effort · ctrl+j adds a line"),
+		dimStyle.Render("/resume carries on an earlier conversation here"),
 	)
 	// Fit long values to the screen rather than wrapping them.
 	body := lipgloss.NewStyle().MaxWidth(max(1, width-4)).Render(

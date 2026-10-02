@@ -35,7 +35,10 @@ func (s *Session) applySettings() {
 		return
 	}
 	if set.ModelName != s.cfg.ModelName {
+		// Every message is recorded before a request starts, so the
+		// rewrite counts as recorded: portable reads the log back the same.
 		s.history = portable(s.history)
+		s.recorded = len(s.history)
 	}
 	set.AutoEffort = set.AutoEffort && s.canAuto
 	s.cfg.Settings = *set

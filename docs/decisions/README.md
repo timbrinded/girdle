@@ -29,5 +29,6 @@ These records preserve the decision, rationale and evidence at the stated date. 
 | [0023](0023-model-picker.md) | Model picker and reasoning effort |
 | [0024](0024-tui-presentation.md) | How the TUI presents a session |
 | [0025](0025-fast-by-default.md) | The fast flow is the default; `-boring` turns it off |
+| [0026](0026-conversations-in-the-event-log.md) | Conversations are carried on from the event log |
 
-The original event-log and provider choices are in 0001–0003. The benchmark evolved through 0004–0020, including removed ideas and revised scoring. Records 0021–0023 establish the configured model, kernel structure and model-picker behavior; 0024 records how the TUI presents a session, and 0025 makes the fast flow the default. Preserve measurement dates and methods when citing them.
+The original event-log and provider choices are in 0001–0003. The benchmark evolved through 0004–0020, including removed ideas and revised scoring. Records 0021–0023 establish the configured model, kernel structure and model-picker behavior; 0024 records how the TUI presents a session, 0025 makes the fast flow the default, and 0026 keeps conversations in the event log so they can be carried on. Preserve measurement dates and methods when citing them.
