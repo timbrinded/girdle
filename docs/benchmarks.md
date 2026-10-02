@@ -65,7 +65,7 @@ Replace `<run>` with the result directory printed by the runner. Without `-w`, e
 | `-o dir` | Timestamp under `bench/results` | Output directory |
 | `-w` | Off | Reuse warmed directories |
 
-Agents are `girdle`, `girdle-nojev`, `girdle-fast` and `pi`. A Girdle variant accepts flags after `+`, such as `girdle-fast+crosscheck=false`. A build label after `@` selects `bin/girdle-<label>`:
+Agents are `girdle` (the boring flow, run with `-fast=false`), `girdle-nojev` (the boring flow without checkpoints), `girdle-fast` and `pi`. `-fast=false` rather than `-boring` keeps builds from before the fast flow became the default comparable. A Girdle variant accepts flags after `+`, such as `girdle-fast+crosscheck=false`. A build label after `@` selects `bin/girdle-<label>`:
 
 ```bash
 go build -o bin/girdle-base ./cmd/girdle

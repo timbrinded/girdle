@@ -46,6 +46,7 @@ The start effort comes from explicit `-reasoning` or `-no-route` flags, otherwis
 | `GIRDLE_PROVIDER` | Initial value of `-provider`, otherwise `openrouter` |
 | `GIRDLE_MODEL` | Initial value of `-model` |
 | `GIRDLE_JEV` | Initial value of `-jev`, otherwise `typesafe` |
+| `GIRDLE_BORING` | `1` turns the fast flow off unless `-fast` or `-boring` is given |
 | `GIRDLE_JEV_URL` | Base URL for `-jev typesafe`, default `https://api.typesafe.ai`; the client appends `/v1/systemone` |
 | `GIRDLE_JEV_MODEL` | Decision model for `-jev typesafe`, default `jev-1.13.0` |
 | `XDG_CONFIG_HOME` | Saved models and effort under `girdle/models.json`; default `~/.config` |
@@ -90,7 +91,7 @@ The loader converts these text entries into Fantasy messages. A seed is a test i
 
 ## Fast flow
 
-`-fast` enables the features below and sets `-race 3` and `-hedge 3s`. Each explicit flag overrides its fast-flow setting, so `-fast -prefetch=false` leaves prefetch off. All listed Boolean features default to `false` without `-fast`.
+The fast flow is on by default. It enables the features below and sets `-race 3` and `-hedge 3s`. Each explicit flag overrides its fast-flow setting, so `-prefetch=false` leaves prefetch off. `-boring` turns the fast flow off, as do `-fast=false` and `GIRDLE_BORING=1`; a flag beats the environment, and `-fast -boring` together is an error. In the boring flow, every listed Boolean feature defaults to `false`.
 
 | Flag | Effect | Prerequisite |
 | --- | --- | --- |
@@ -110,8 +111,8 @@ The kernel disables features whose prerequisites are missing. `session_start` re
 
 | Other flag | Effective default | Effect |
 | --- | --- | --- |
-| `-race n` | `1`, or `3` with fast flow | Maximum main-call copies; values below two do not race |
-| `-hedge duration` | `0`, or `3s` with fast flow | Delay between launching extra copies after the first call of a request |
+| `-race n` | `3`, or `1` with `-boring` | Maximum main-call copies; values below two do not race |
+| `-hedge duration` | `3s`, or `0` with `-boring` | Delay between launching extra copies after the first call of a request |
 | `-compact` | `false` | Prune older tool output judged unnecessary every eight steps; shelved and outside fast flow |
 
 The first main LLM call of each request starts all raced copies together. Later calls launch extra copies only if the earlier copies have not finished before the hedge delay. This affects cost as well as latency.

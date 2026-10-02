@@ -27,5 +27,7 @@ These records preserve the decision, rationale and evidence at the stated date. 
 | [0021](0021-default-model.md) | Space Bunny Alpha is Girdle's default model |
 | [0022](0022-kernel-structure.md) | One place for feature dependencies, Jev calls and turn halts |
 | [0023](0023-model-picker.md) | Model picker and reasoning effort |
+| [0024](0024-tui-presentation.md) | How the TUI presents a session |
+| [0025](0025-fast-by-default.md) | The fast flow is the default; `-boring` turns it off |
 
-The original event-log and provider choices are in 0001–0003. The benchmark evolved through 0004–0020, including removed ideas and revised scoring. Records 0021–0023 establish the configured model, kernel structure and model-picker behavior. Preserve measurement dates and methods when citing them.
+The original event-log and provider choices are in 0001–0003. The benchmark evolved through 0004–0020, including removed ideas and revised scoring. Records 0021–0023 establish the configured model, kernel structure and model-picker behavior; 0024 records how the TUI presents a session, and 0025 makes the fast flow the default. Preserve measurement dates and methods when citing them.

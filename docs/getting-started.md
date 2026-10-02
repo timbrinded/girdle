@@ -86,7 +86,7 @@ girdle -C /path/to/project -model 'provider/model-id' -p "fix the failing test"
 
 The ID above is a placeholder: choose a tool-calling model available to your account. In the OpenRouter TUI, Ctrl+L opens the searchable picker.
 
-Add `-fast` to enable the fast flow. Inspect the resulting diff and checks before relying on the outcome. Exit `0` means the harness judged the request complete; it is not an independent proof of correctness. See [usage](usage.md#headless-runs).
+Girdle runs the fast flow by default; add `-boring` to turn it off. Inspect the resulting diff and checks before relying on the outcome. Exit `0` means the harness judged the request complete; it is not an independent proof of correctness. See [usage](usage.md#headless-runs).
 
 ## Troubleshooting
 

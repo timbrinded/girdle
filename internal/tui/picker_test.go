@@ -119,7 +119,7 @@ func rowIDs(p *picker) []string {
 	return out
 }
 
-func lastLine(m *model) string { return m.lines[len(m.lines)-1] }
+func lastLine(m *model) string { return m.blocks[len(m.blocks)-1].text }
 
 // plain drops a line's colours.
 func plain(s string) string { return regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(s, "") }
@@ -439,7 +439,7 @@ func TestStatusShowsTheRunningModelAndWhatComesNext(t *testing.T) {
 	if !strings.Contains(s, "a") || !strings.Contains(s, "auto → low") || !strings.Contains(s, "→ next") || !strings.Contains(s, "b") {
 		t.Fatalf("status %q", s)
 	}
-	m.Update(runDoneMsg{outcome: kernel.OutcomeDone, reason: "done"})
+	m.handleEvent(kernel.Event{Type: kernel.EventRunEnd, Outcome: kernel.OutcomeDone, Reason: "done", Usage: &kernel.Usage{InputTokens: 1000}})
 	if s := plain(m.statusLine()); strings.Contains(s, "next") || !strings.HasSuffix(strings.TrimSpace(s), "b • effort auto") {
 		t.Fatalf("after the run: %q", s)
 	}

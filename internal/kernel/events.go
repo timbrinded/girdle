@@ -17,6 +17,7 @@ const (
 	EventSessionStart  EventType = "session_start"
 	EventUserMessage   EventType = "user_message"
 	EventTextDelta     EventType = "text_delta" // streamed to the UI, never logged
+	EventToolStart     EventType = "tool_start" // the LLM began writing a tool call: streamed to the UI, never logged
 	EventAssistantText EventType = "assistant_text"
 	EventToolCall      EventType = "tool_call"
 	EventToolResult    EventType = "tool_result"
@@ -109,9 +110,9 @@ func OpenLog(path string) (*Log, error) {
 	return &Log{f: f}, nil
 }
 
-// Write appends one event. Streaming deltas are skipped.
+// Write appends one event. Events streamed only to the UI are skipped.
 func (l *Log) Write(e Event) error {
-	if l == nil || e.Type == EventTextDelta {
+	if l == nil || e.UIOnly() {
 		return nil
 	}
 	b, err := json.Marshal(e)
@@ -131,3 +132,7 @@ func (l *Log) Close() error {
 	}
 	return l.f.Close()
 }
+
+// UIOnly reports whether an event exists only to show progress as it
+// streams, so logs and JSON output leave it out.
+func (e Event) UIOnly() bool { return e.Type == EventTextDelta || e.Type == EventToolStart }

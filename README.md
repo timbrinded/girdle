@@ -10,7 +10,7 @@ The goal is **an agent you can leave alone**. This is an experimental implementa
 
 ## Why Girdle
 
-In the recorded warm Muse Spark suites, `-fast` completed tasks in **roughly half the time** of Girdle's default flow, using the **same model and matching its observed pass rate**. Girdle can also **nudge unfinished work to continue** and **screen risky shell commands before execution**.
+In the recorded warm Muse Spark suites, the fast flow, now Girdle's default, completed tasks in **roughly half the time** of the boring flow, which was the default then, using the **same model and matching its observed pass rate**. Girdle can also **nudge unfinished work to continue** and **screen risky shell commands before execution**.
 
 ![Girdle: roughly twice as fast on the two recorded warm Muse Spark suites, with the same model and observed pass rate. Batched tools reduce model round trips; Jev can nudge unfinished work and redirect loops or drift; the shell tripwire combines parsed command checks with risk and authorization judgements.](docs/assets/why-girdle.svg)
 
@@ -45,11 +45,12 @@ The configured fallback model is `stealth/space-bunny-alpha`. Treat it as a publ
 
 Girdle checks what happens around the LLM's tool loop. At a turn end, Jev can end the request, nudge the agent to continue, or return control to you. Decisions and their evidence go into a local JSONL log.
 
-`-fast` enables a flow designed to reduce LLM round trips: repository context with the request, batched lookup and edits, checks after edits, and earlier completion decisions. It also attempts an independent test of the request. The first main LLM call races three copies; later calls start extra copies after a three-second hedge. Racing can increase usage and spend.
+By default Girdle runs the fast flow, which is designed to reduce LLM round trips: repository context with the request, batched lookup and edits, checks after edits, and earlier completion decisions. It also attempts an independent test of the request. The first main LLM call races three copies; later calls start extra copies after a three-second hedge. Racing can increase usage and spend. `-boring`, or `GIRDLE_BORING=1`, turns the fast flow off.
 
 ```bash
-girdle -fast -C /path/to/project -p "fix the failing test"
-girdle -fast -crosscheck=false -p "update the README"
+girdle -C /path/to/project -p "fix the failing test"
+girdle -crosscheck=false -p "update the README"
+girdle -boring -p "update the README"   # one call at a time, no fast-flow features
 ```
 
 The shell tripwire is enabled by default. It parses commands with ast-grep where available and uses Jev for decisions that need judgement. It is a guard on shell commands; ordinary sessions run with your filesystem and network access. See the [architecture](docs/architecture.md) and [security policy](SECURITY.md) for the boundaries.

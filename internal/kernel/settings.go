@@ -18,6 +18,13 @@ func (s *Session) Configure(set Settings) { s.next.Store(&set) }
 // Settings.AutoEffort takes effect.
 func (s *Session) CanAutoEffort() bool { return s.canAuto }
 
+// Dir is the working directory the session's tools run in.
+func (s *Session) Dir() string { return s.cfg.Dir }
+
+// Judged reports whether Jev decides what happens at a turn's end. Without
+// it, every turn end hands control back to the user.
+func (s *Session) Judged() bool { return s.cfg.Checkpoints && s.cfg.Jev != nil }
+
 // applySettings switches to the settings Configure left, if any, as a
 // request starts. Only cfg.Settings changes: goroutines still finishing the
 // last request may be reading the rest.

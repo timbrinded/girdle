@@ -4,7 +4,8 @@
 #
 #   bench/run-one.sh <agent> <task> <rep> <outroot>
 #
-# Agents: girdle, girdle-nojev (checkpoints off), girdle-fast (-fast flow),
+# Agents: girdle (the default flow), girdle-nojev (default flow, checkpoints
+# off), girdle-fast (the fast flow),
 # pi (vanilla Pi, run in tmux). A Girdle agent can carry Girdle flags after
 # a +, which is how an idea or an ablation is tested:
 # girdle-fast+reproduce=false runs -fast -reproduce=false, and
@@ -106,7 +107,11 @@ start=$(date +%s)
 case $base in
 girdle | girdle-nojev | girdle-fast)
   extra=("${deny[@]}")
+  # The fast flow is Girdle's default; the girdle and girdle-nojev agents
+  # measure the default flow, so they turn it off. -fast=false means that to
+  # builds from before -boring too, so @label comparisons still work.
   [[ $base == girdle-nojev ]] && extra+=(--no-checkpoints)
+  [[ $base == girdle || $base == girdle-nojev ]] && extra+=(--fast=false)
   [[ $base == girdle-fast ]] && extra+=(--fast)
   extra+=(${flags[@]+"${flags[@]}"})
   timeout "$timeout_s" "$bin" -C "$work" -p "$prompt" -json \
